@@ -544,8 +544,7 @@
         useRange: false,
         step: 2,
       };
-      persist();
-      notice('PDF проверен · ' + pages + ' стр.');
+      if (persist()) notice('PDF проверен · ' + pages + ' стр.');
     } catch (e) {
       if (sessionCurrent(operation)) {
         uploadError = e.message?.startsWith('Для прототипа')
