@@ -1,8 +1,14 @@
 import * as helpers from './shared.mjs';
 import { createStaff } from './staff.js';
+import { createStudio } from './studio.js';
 import { createCustomer } from './customer/controller.mjs';
 
-window.initializeStudio(helpers);
+window.Studio = createStudio({
+  document,
+  indexedDB,
+  notify: (message) => window.entryToast?.(message),
+  placeOrder: (design, preview) => window.Customer.createStudioOrder(design, preview),
+});
 window.Customer = createCustomer({
   window,
   document,

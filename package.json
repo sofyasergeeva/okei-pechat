@@ -5,7 +5,7 @@
   "description": "Original OKEI PECHAT static project, with a standalone local launcher",
   "scripts": {
     "start": "node scripts/serve-local.cjs",
-    "test": "node --test tests/order-math.test.cjs tests/customer.test.cjs tests/critical-regressions.cjs tests/customer-modules.test.cjs tests/customer-views.test.cjs tests/staff.test.cjs",
+    "test": "node --test tests/order-math.test.cjs tests/customer.test.cjs tests/critical-regressions.cjs tests/customer-modules.test.cjs tests/customer-views.test.cjs tests/staff.test.cjs tests/studio.test.cjs",
     "test:regressions": "node --test tests/critical-regressions.cjs",
     "test:e2e": "playwright test"
   },

@@ -269,3 +269,91 @@ test('Мобильная ширина: главная, печать и диал�
   await page.locator('[data-w-close]').click();
   await expect(page.locator('.w-inspector')).toBeHidden();
 });
+
+async function studioDraft(page) {
+  return page.evaluate(
+    () =>
+      new Promise((resolve, reject) => {
+        const request = indexedDB.open('okei-studio', 1);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const db = request.result;
+          const read = db.transaction('designs').objectStore('designs').get('student_23');
+          read.onsuccess = () => {
+            db.close();
+            resolve(read.result);
+          };
+          read.onerror = () => {
+            db.close();
+            reject(read.error);
+          };
+        };
+      }),
+  );
+}
+
+test('Canvas: drag, layers, saved draft and transparent PNG export', async ({ page }) => {
+  await openHome(page);
+  await login(page, 'student_23');
+  await page.locator('.c-nav [data-c-page="merch"]').click();
+  await page.locator('[data-c-studio]').click();
+  await page.locator('#s-layer-list button').filter({ hasText: 'Логотип ОКЭИ' }).click();
+  const canvas = page.locator('#s-canvas');
+  await canvas.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(async () => (await studioDraft(page))?.front[0].x).toBeCloseTo(0.505, 8);
+  const box = await canvas.boundingBox();
+  const x = box.x + (361.14 * box.width) / 720,
+    y = box.y + (373.8 * box.height) / 900;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + (22.8 * box.width) / 720, y + (16 * box.height) / 900, { steps: 5 });
+  await page.mouse.up();
+  // Edge rounds pointer coordinates; the original commit produces the same ~5e-8 offset.
+  await expect.poll(async () => (await studioDraft(page)).front[0].x).toBeCloseTo(0.605, 6);
+  const moved = await studioDraft(page);
+  expect(moved.front[0].y).toBeCloseTo(0.39, 6);
+  const w = page.locator('#s-width');
+  await w.evaluate((input) => {
+    input.value = '70';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await expect.poll(async () => (await studioDraft(page)).front[0].w).toBeCloseTo(0.7, 8);
+  const resized = await studioDraft(page);
+  expect(resized.front[0].w / resized.front[0].h).toBeCloseTo(
+    moved.front[0].w / moved.front[0].h,
+    8,
+  );
+  await page.locator('[data-s-layer]').click();
+  await expect.poll(async () => (await studioDraft(page)).front.at(-1).type).toBe('image');
+  const saved = await studioDraft(page);
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('[data-s-export]').click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('okei-print-front.png');
+  const bytes = await require('node:fs/promises').readFile(await download.path());
+  const png = await page.evaluate(async (bytes) => {
+    const image = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }));
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext('2d');
+    context.drawImage(image, 0, 0);
+    image.close();
+    const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    return {
+      width: canvas.width,
+      height: canvas.height,
+      cornerAlpha: data[3],
+      hasInk: data.some((value, index) => index % 4 === 3 && value > 0),
+    };
+  }, Array.from(bytes));
+  expect(png).toEqual({ width: 2400, height: 3368, cornerAlpha: 0, hasInk: true });
+  await page.reload();
+  await expect(page.locator('body')).toHaveAttribute('data-screen', 'home');
+  await login(page, 'student_23');
+  await page.locator('.c-nav [data-c-page="merch"]').click();
+  await page.locator('[data-c-studio]').click();
+  await expect(page.locator('#s-canvas')).toBeVisible();
+  expect(await studioDraft(page)).toEqual(saved);
+});
