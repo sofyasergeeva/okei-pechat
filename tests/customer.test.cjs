@@ -3,6 +3,38 @@ const assert = require('node:assert/strict');
 const { Blob } = require('node:buffer');
 const { createCustomerHarness, orderFixture } = require('./customer-harness.cjs');
 
+test('К1: черновик сохраняет свежие заказы и дополнительные поля существующего хранилища', async () => {
+  const app = createCustomerHarness({ orders: [orderFixture('work')] });
+  const stored = app.data();
+  stored.orders[0].status = 'ready';
+  stored.legacyMetadata = { keep: true };
+  app.storage.setItem(app.keyFor('alice'), JSON.stringify(stored));
+  await app.input('c-comment', 'Комментарий к новому заказу');
+  assert.equal(app.data().orders[0].status, 'ready');
+  assert.equal(app.data().draft.comment, 'Комментарий к новому заказу');
+  assert.deepEqual(app.data().legacyMetadata, { keep: true });
+});
+
+test('К1: отмена устаревшего заказа не перезаписывает статус сотрудника', async () => {
+  const app = createCustomerHarness({ orders: [orderFixture()] });
+  const stored = app.data();
+  stored.orders[0].status = 'work';
+  app.storage.setItem(app.keyFor('alice'), JSON.stringify(stored));
+  await app.click({ cConfirmCancel: '2001' });
+  assert.equal(app.data().orders[0].status, 'work');
+  assert.ok(app.notices.some((message) => message.includes('Заказ изменился')));
+});
+
+test('К1: изменение одного заказа сохраняет свежие изменения другого', async () => {
+  const app = createCustomerHarness({ orders: [orderFixture(), orderFixture('work', '2002')] });
+  const stored = app.data();
+  stored.orders[1].status = 'ready';
+  app.storage.setItem(app.keyFor('alice'), JSON.stringify(stored));
+  await app.click({ cConfirmCancel: '2001' });
+  assert.equal(app.data().orders[0].status, 'cancelled');
+  assert.equal(app.data().orders[1].status, 'ready');
+});
+
 test('Новый заказ отменяется с сохранением параметров и истории', async () => {
   const initial = orderFixture();
   const app = createCustomerHarness({ orders: [initial] });
@@ -65,4 +97,31 @@ test('Макет оформляется с сохранением JSON, прев
   assert.equal(app.files.get(order.previewKey), preview);
   assert.equal(app.element('#modal').hidden, false);
   assert.match(app.element('#modalContent').innerHTML, /data-c-success-order=/);
+});
+
+test('К1: сохранение профиля не перезаписывает новый статус и сообщение сотрудника', async () => {
+  const app = createCustomerHarness({ orders: [orderFixture('work')] });
+  await app.click({ cPage: 'profile' });
+
+  // A different tab has already committed these employee changes to the shared origin.
+  const employeeData = app.data();
+  employeeData.orders[0].status = 'ready';
+  employeeData.orders[0].messages.push({
+    id: 'staff-message',
+    author: 'staff',
+    text: 'Заказ готов.',
+    time: '2026-01-15T06:00:00.000Z',
+  });
+  app.storage.setItem(app.keyFor('alice'), JSON.stringify(employeeData));
+
+  app.element('#c-profile-name').value = 'Updated name';
+  app.element('#c-profile-group').value = 'TEST-01';
+  await app.submit('c-profile-form');
+  const saved = app.data();
+  assert.equal(saved.profile.name, 'Updated name', 'Обработчик профиля должен выполниться');
+  assert.deepEqual(
+    { status: saved.orders[0].status, messages: saved.orders[0].messages },
+    { status: 'ready', messages: employeeData.orders[0].messages },
+    'Изменения сотрудника должны пережить сохранение профиля заказчиком',
+  );
 });

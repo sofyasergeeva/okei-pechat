@@ -70,11 +70,56 @@
       return f;
     }
   }
-  function persist() {
+  let savedOrders = new Map();
+  function rememberOrders() {
+    savedOrders = new Map(orders.map((order) => [order.id, JSON.stringify(order)]));
+  }
+  function persist(scope = 'draft', { clearDraft = false } = {}) {
+    let stored;
     try {
-      localStorage.setItem(key, JSON.stringify({ orders, draft, profile }));
-    } catch {
-      notice('Не хватает места для сохранения. Скачай важные файлы.');
+      stored = JSON.parse(localStorage.getItem(key) || 'null') || {};
+      const data = {
+        ...stored,
+        orders: stored.orders || orders,
+        draft: stored.draft || draft,
+        profile: stored.profile || profile,
+      };
+      if (scope === 'draft' || clearDraft) data.draft = clearDraft ? blank() : draft;
+      if (scope === 'profile') data.profile = profile;
+      if (scope === 'orders') {
+        const changed = orders.filter(
+          (order) => JSON.stringify(order) !== savedOrders.get(order.id),
+        );
+        for (const order of changed) {
+          const current = data.orders.find((item) => item.id === order.id);
+          if (JSON.stringify(current) !== savedOrders.get(order.id)) {
+            throw Error(
+              'Заказ изменился в другой вкладке. Проверь актуальные данные и повтори действие.',
+            );
+          }
+        }
+        const updates = new Map(changed.map((order) => [order.id, order]));
+        data.orders = [
+          ...changed.filter((order) => !savedOrders.has(order.id)),
+          ...data.orders.map((order) => updates.get(order.id) || order),
+        ];
+      }
+      // Read/merge/write reduces stale overwrites; localStorage is not transactional.
+      localStorage.setItem(key, JSON.stringify(data));
+      ({ orders, draft, profile } = data);
+      rememberOrders();
+      return true;
+    } catch (error) {
+      if (scope === 'orders' && stored?.orders) {
+        orders = stored.orders;
+        rememberOrders();
+      }
+      notice(
+        error.message?.startsWith('Заказ изменился')
+          ? error.message
+          : 'Не удалось сохранить данные в браузере. Проверь свободное место и повтори действие.',
+      );
+      return false;
     }
   }
   function openDB() {
@@ -224,6 +269,7 @@
     const saved = read(key, null);
     profile = saved?.profile || { name: u.name, group: u.group || 'ИСП-23' };
     orders = saved?.orders || (u.id === 'student_23' ? sampleOrders() : []);
+    rememberOrders();
     draft = saved?.draft || blank();
     page = 'overview';
     persist();
@@ -549,7 +595,7 @@
       };
       orders.unshift(o);
       draft = blank();
-      persist();
+      persist('orders', { clearDraft: true });
       loading = false;
       page = 'overview';
       draw(true);
@@ -586,7 +632,7 @@
     detailTab = tab;
     if (tab === 'chat') {
       o.unread = 0;
-      persist();
+      persist('orders');
       draw();
     }
     let layer = $('#c-order-layer');
@@ -771,7 +817,7 @@
       const o = orders.find((o) => o.id === detail);
       if (detailTab === 'chat') {
         o.unread = 0;
-        persist();
+        persist('orders');
         draw();
       }
       renderDrawer();
@@ -798,7 +844,7 @@
       if (o?.status === 'new') {
         o.status = 'cancelled';
         o.events.push({ status: 'cancelled', time: new Date().toISOString() });
-        persist();
+        persist('orders');
       }
       closeMainModal();
       draw();
@@ -860,7 +906,7 @@
       if (next) {
         o.status = next;
         o.events.push({ status: next, time: new Date().toISOString() });
-        persist();
+        persist('orders');
         draw();
         renderDrawer();
         notice('Статус изменён только для демонстрации.');
@@ -907,7 +953,7 @@
         unread: 0,
       };
       orders.unshift(o);
-      persist();
+      persist('orders');
       closeMainModal();
       page = 'overview';
       draw(true);
@@ -981,7 +1027,7 @@
         o.status = 'review';
         o.events.push({ status: 'review', time: new Date().toISOString() });
       }
-      persist();
+      persist('orders');
       draw();
       renderDrawer();
       $('#c-message').focus();
@@ -996,7 +1042,7 @@
         return;
       }
       profile = { name, group };
-      persist();
+      persist('profile');
       draw();
       notice('Профиль сохранён.');
     }
@@ -1052,7 +1098,7 @@
         unread: 0,
       };
       orders.unshift(o);
-      persist();
+      persist('orders');
       page = 'overview';
       draw(true);
       openSuccess(o);

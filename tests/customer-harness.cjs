@@ -213,6 +213,7 @@ function createCustomerHarness({ orders = [] } = {}) {
       await dispatch('click', button);
     },
     submit: (id) => dispatch('submit', { id }),
+    input: (id, value) => dispatch('input', { id, value, dataset: {} }),
     pauseNextFileWrite() {
       if (writeGate) throw new Error('A file write is already paused');
       const gate = {};
