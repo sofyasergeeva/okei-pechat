@@ -1,4 +1,5 @@
 import * as helpers from './shared.mjs';
+import { createStaff } from './staff.js';
 import { createCustomer } from './customer/controller.mjs';
 
 window.initializeStudio(helpers);
@@ -12,7 +13,13 @@ window.Customer = createCustomer({
   studio: window.Studio,
   notify: (message) => window.entryToast(message),
 });
-window.initializeStaff(helpers);
+window.Staff = createStaff({
+  window,
+  document,
+  storage: localStorage,
+  indexedDB,
+  ui: window.OkeiUI,
+});
 
 // Keep the classic app initialization after the customer module graph is ready.
 await new Promise((resolve, reject) => {
