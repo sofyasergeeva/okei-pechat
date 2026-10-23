@@ -134,7 +134,8 @@ export function createStaffViews(state, { ui, pdfArtwork, server = false }) {
   function actions(o) {
     if (server && o.status === 'work' && !o.printingStartedAt)
       return (
-        '<div class="w-action-block"><button class="w-button w-primary" data-w-start-printing>Начать печать ' +
+        '<div class="w-action-block"><button class="w-button w-primary" data-w-start-printing>' +
+        (o.kind === 'merch' ? 'Начать изготовление ' : 'Начать печать ') +
         I('printer') +
         '</button><button class="w-text" data-w-tab="chat">Уточнить ' +
         I('message') +
@@ -242,7 +243,7 @@ export function createStaffViews(state, { ui, pdfArtwork, server = false }) {
     );
   }
   function fileActions(o) {
-    if (server && o.files?.length > 1)
+    if (server && o.kind === 'document' && o.files?.length > 1)
       return o.files
         .map(
           (file) =>
@@ -263,6 +264,26 @@ export function createStaffViews(state, { ui, pdfArtwork, server = false }) {
             '" download>Скачать</a></div>',
         )
         .join('');
+    if (server && o.kind === 'merch')
+      return (
+        '<div class="w-file-actions"><button class="w-button w-outline" data-w-preview>Превью PNG</button><button class="w-text" data-w-design>Исходный макет JSON</button>' +
+        o.files
+          .filter((file) => file.kind !== 'design')
+          .map(
+            (file) =>
+              '<a class="w-text" href="/api/orders/' +
+              o.id +
+              '/files/' +
+              E(file.id) +
+              '" download>' +
+              { preview: 'Скачать превью', front: 'Принт спереди PNG', back: 'Принт сзади PNG' }[
+                file.kind
+              ] +
+              '</a>',
+          )
+          .join('') +
+        '</div>'
+      );
     return `<div class="w-file-actions">${server && o.files?.length === 1 ? '<a class="w-text" href="/api/orders/' + o.id + '/file" download>Скачать PDF</a>' : ''}${o.kind === 'document' ? `<button class="w-button w-outline" data-w-file ${o.fileKey || o.sampleFile ? '' : 'disabled'}>${I('file')} ${o.fileKey || o.sampleFile ? 'Открыть PDF' : 'Нет исходного файла'}</button>` : o.previewKey || o.designKey ? `${o.previewKey ? '<button class="w-button w-outline" data-w-preview>Превью PNG</button>' : ''}${o.designKey ? '<button class="w-text" data-w-design>Исходный макет JSON</button>' : ''}` : ''}</div>`;
   }
   function detail() {
@@ -290,10 +311,14 @@ export function createStaffViews(state, { ui, pdfArtwork, server = false }) {
           ? chat(o)
           : `${fileActions(o)}${
               o.kind === 'merch'
-                ? `<div class="w-merch-preview">` +
-                  `<img src="/assets/college-shirt.png" alt="Пример модели футболки">${o.params.design === 'classic' ? '<img class="w-merch-logo" src="/assets/college-red.svg" alt="Логотип ОКЭИ">' : '<span>Макет заказчика</span>'}</div>`
+                ? server && o.previewKey
+                  ? '<div class="w-merch-preview"><img src="/api/files/' +
+                    E(o.previewKey) +
+                    '" alt="Макет заказа"></div>'
+                  : `<div class="w-merch-preview">` +
+                    `<img src="/assets/college-shirt.png" alt="Пример модели футболки">${o.params.design === 'classic' ? '<img class="w-merch-logo" src="/assets/college-red.svg" alt="Логотип ОКЭИ">' : '<span>Макет заказчика</span>'}</div>`
                 : ''
-            }${server && o.printingStartedAt ? '<p class="w-tariff">Печать начата: ' + stamp(o.printingStartedAt) + '</p>' : ''}${server && o.cancelledAt ? '<p class="w-tariff">Отменён: ' + stamp(o.cancelledAt) + '</p>' : ''}${params(o)}${
+            }${server && o.printingStartedAt ? '<p class="w-tariff">' + (o.kind === 'merch' ? 'Изготовление начато: ' : 'Печать начата: ') + stamp(o.printingStartedAt) + '</p>' : ''}${server && o.cancelledAt ? '<p class="w-tariff">Отменён: ' + stamp(o.cancelledAt) + '</p>' : ''}${params(o)}${
               o.comment || o.params.comment
                 ? `<div class="w-comment">` +
                   `<small>Комментарий</small>` +

@@ -1,7 +1,7 @@
 ﻿import { createStaffState, visible, createCSV } from './staff/orders.mjs';
 import { createStaffViews } from './staff/views.mjs';
 import { downloadBlob } from './shared.mjs';
-import { openServerPDF } from './api.mjs';
+import { openServerPDF, createOrderPolling, patchOrderRegions } from './api.mjs';
 
 export function createServerStaff({ api, ui, notify }) {
   const state = createStaffState();
@@ -17,6 +17,36 @@ export function createServerStaff({ api, ui, notify }) {
     if (!visible(state).some((o) => o.id === state.chosen))
       state.chosen = visible(state)[0]?.id || '';
   }
+  const polling = createOrderPolling({
+    document,
+    active: () => Boolean(state.user) && !pending,
+    onExpired: () => notify('Сессия завершена. Войди снова.'),
+    update: async () => {
+      const owner = state.user,
+        orders = await api.request('/orders');
+      if (state.user !== owner || pending || document.hidden) return;
+      const all = orders.map((o) => ({ ...o, _ref: o.id, _store: 'server' }));
+      if (JSON.stringify(all) === JSON.stringify(state.all)) return;
+      state.all = all;
+      if (!document.body.classList.contains('is-staff')) return;
+      if (!state.chosen) pick();
+      const next = document.createElement('div');
+      next.innerHTML = render();
+      const regions =
+        state.page === 'groups'
+          ? ['.w-content', '.w-nav']
+          : ['.w-nav', '.w-stats', '#w-results', '#w-result-count', '.w-detail-header'];
+      if (state.detailTab === 'chat') regions.push('.w-messages');
+      else {
+        regions.push('.w-detail-body');
+        if (!state.confirm) regions.push('.w-detail-footer');
+      }
+      if (!document.querySelector('.w-detail-header') && next.querySelector('.w-detail-header'))
+        regions.push('.w-inspector');
+      patchOrderRegions(next, regions);
+      syncMobile();
+    },
+  });
   async function refresh() {
     const orders = await api.request('/orders');
     state.all = orders.map((o) => ({ ...o, _ref: o.id, _store: 'server' }));
@@ -26,6 +56,7 @@ export function createServerStaff({ api, ui, notify }) {
   async function load(user) {
     await refresh();
     state.user = user;
+    polling.start();
   }
   function syncMobile() {
     const panel = $('.w-inspector');
@@ -53,10 +84,10 @@ export function createServerStaff({ api, ui, notify }) {
       .render()
       .replace(
         'Демо-режим · заказы и сообщения доступны только в этом браузере.',
-        'Серверный режим · общая очередь PDF-заказов.',
+        'Серверный режим · общая очередь заказов.',
       )
       .replace('Переписка локальная, в этом браузере.', 'Переписка сохраняется на сервере.')
-      .replace('Показаны локальные данные и примеры.', 'Показаны серверные PDF-заказы.');
+      .replace('Показаны локальные данные и примеры.', 'Показаны серверные заказы.');
   }
   function draw() {
     if (state.user && document.body.classList.contains('is-staff')) {
@@ -166,10 +197,28 @@ export function createServerStaff({ api, ui, notify }) {
         state.confirm = '';
         return;
       }
+      if (button.hasAttribute('data-w-preview'))
+        return openServerPDF(api, '/orders/' + selected().id + '/files/' + selected().previewKey);
+      if (button.hasAttribute('data-w-design')) {
+        const order = selected(),
+          file = await api.request('/orders/' + order.id + '/files/' + order.designKey, {
+            blob: true,
+          });
+        downloadBlob(file, 'okei-' + order.id + '-design.json', {
+          document,
+          append: true,
+          revokeAfter: 60000,
+        });
+        return;
+      }
       if (d.wFileId) return openServerPDF(api, '/orders/' + selected().id + '/files/' + d.wFileId);
       if (button.hasAttribute('data-w-start-printing')) {
         await update('/printing', {});
-        notify('Печать начата. Отмена недоступна.');
+        notify(
+          selected()?.kind === 'merch'
+            ? 'Изготовление начато. Отмена недоступна.'
+            : 'Печать начата. Отмена недоступна.',
+        );
         return;
       }
       if (button.hasAttribute('data-w-file'))
@@ -299,6 +348,7 @@ export function createServerStaff({ api, ui, notify }) {
     load,
     render,
     reset() {
+      polling.stop();
       Object.assign(state, createStaffState());
       pending = false;
       document.body.classList.remove('w-panel-open');

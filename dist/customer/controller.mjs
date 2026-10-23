@@ -363,6 +363,11 @@ export function createCustomer({
       return o.id;
     },
     render,
+    openPage(page) {
+      state.page = page;
+      state.merchMode = 'collection';
+      draw();
+    },
     home() {
       state.page = 'overview';
     },

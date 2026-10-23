@@ -77,6 +77,10 @@ export function startApp({
     $('#accountButton').dataset.go = state.account ? 'account' : 'login';
     bindForm();
     bindMotion();
+    if (state.screen === 'account' && state.requestedPage) {
+      if (state.account.role === 'student') customer.openPage(state.requestedPage);
+      state.requestedPage = null;
+    }
     window.scrollTo({ top: 0, behavior: 'instant' });
   }
   function go(target) {
@@ -164,6 +168,12 @@ export function startApp({
     if (!b) return;
     if (b.dataset.themeChoice) {
       return selectTheme(b);
+    }
+    if (b.dataset.workspace) {
+      closeModal();
+      state.requestedPage = b.dataset.workspace;
+      go(state.account ? 'account' : 'login');
+      return;
     }
     if (b.dataset.go) {
       return navigate(b);

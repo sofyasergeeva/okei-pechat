@@ -584,7 +584,7 @@ export function createCustomerViews(state, { orderMath, ui, studio, pdfArtwork, 
       `</div>` +
       `<button id="c-close-order" aria-label="Закрыть заказ" data-c-close>×</button>` +
       `</header>` +
-      `<div class="c-drawer-status">${badge(o)}<p>${server && o.status === 'cancelled' ? 'Заказ отменён до начала печати.' : states[o.status][1]}</p>` +
+      `<div class="c-drawer-status">${badge(o)}<p>${server && o.status === 'cancelled' ? (o.kind === 'merch' ? 'Заказ отменён до начала изготовления.' : 'Заказ отменён до начала печати.') : states[o.status][1]}</p>` +
       `</div>` +
       `<div class="c-tabs c-drawer-tabs">` +
       `<button data-c-drawer-tab="info" class="${state.detailTab === 'info' ? 'active' : ''}">Детали заказа</button>` +
@@ -870,7 +870,7 @@ export function createCustomerViews(state, { orderMath, ui, studio, pdfArtwork, 
     );
   }
   function orderAttachments(o) {
-    if (server && o.files?.length > 1)
+    if (server && o.kind === 'document' && o.files?.length > 1)
       return o.files
         .map(
           (file) =>
@@ -956,7 +956,10 @@ export function createCustomerViews(state, { orderMath, ui, studio, pdfArtwork, 
       `</dl>` +
       (server
         ? (o.printingStartedAt
-            ? '<p class="c-hint">Печать начата: ' + fmt(o.printingStartedAt) + '</p>'
+            ? '<p class="c-hint">' +
+              (o.kind === 'merch' ? 'Изготовление начато: ' : 'Печать начата: ') +
+              fmt(o.printingStartedAt) +
+              '</p>'
             : '') +
           (o.cancelledAt ? '<p class="c-hint">Отменён: ' + fmt(o.cancelledAt) + '</p>' : '')
         : '')

@@ -1,11 +1,11 @@
 ﻿import { blank, createCustomerState } from './customer/state.mjs';
 import { calculateDocumentsQuote, filteredOrders } from './customer/orders.mjs';
 import { createCustomerViews } from './customer/views.mjs';
-import { openServerPDF } from './api.mjs';
+import { openServerPDF, createOrderPolling, patchOrderRegions } from './api.mjs';
 import { plural } from './shared.mjs';
 
-// Server document orders reuse the existing templates. Local merch has its own namespace.
-export function createServerCustomer({ api, ui, studio, local, notify }) {
+// Server PDF and merch orders reuse the existing templates and constructor.
+export function createServerCustomer({ api, ui, studio, notify }) {
   const state = createCustomerState();
   const $ = (selector, root = document) => root.querySelector(selector);
   const views = createCustomerViews(state, {
@@ -32,10 +32,8 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
     input.multiple = mode === 'all' || mode === 'append';
     input.click();
   }
-  let localMerch = false,
-    pending = false;
+  let pending = false;
   const current = () => state.user?.id;
-  const localUser = () => ({ ...state.user, id: 'server-merch:' + current() });
   const quote = () => calculateDocumentsQuote(state.draft, globalThis.OrderMath);
   function saveDraft() {
     try {
@@ -46,6 +44,7 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
   }
   async function load(user) {
     const orders = await api.request('/orders');
+    state.sessionId++;
     state.user = user;
     state.profile = { name: user.name, group: user.group };
     state.orders = orders;
@@ -64,12 +63,13 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
         },
       ];
     state.page = 'overview';
+    polling.start();
   }
   function serverText(html) {
     return html
       .replaceAll(
         'Демо: заказы и сообщения сохраняются только в этом браузере.',
-        'Серверный режим · PDF-заказы и сообщения сохраняются на сервере.',
+        'Серверный режим · заказы и сообщения сохраняются на сервере.',
       )
       .replaceAll(
         'Заказ появится в локальном кабинете. Реальная отправка в колледж в этом прототипе пока не подключена.',
@@ -84,7 +84,6 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
       .replaceAll('Сохранить сообщение в демопереписке', 'Сохранить сообщение');
   }
   function render() {
-    if (localMerch) return local.render(localUser());
     return serverText(views.render());
   }
   function drawer() {
@@ -106,8 +105,10 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
     }
   }
   function draw() {
-    if (!current() || document.body.dataset.screen !== 'account' || localMerch) return;
+    if (!current() || document.body.dataset.screen !== 'account') return;
     $('#main').innerHTML = render();
+    if (state.page === 'merch' && state.merchMode === 'studio')
+      studio.mount('server-merch:' + current());
     $('#c-file-input')?.addEventListener('change', (e) =>
       run(() => upload([...e.target.files], uploadMode)),
     );
@@ -123,6 +124,44 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
     });
     if (state.detail) drawer();
   }
+  const polling = createOrderPolling({
+    document,
+    active: () => Boolean(current()) && !pending,
+    onExpired: () => notify('Сессия завершена. Войди снова.'),
+    update: async () => {
+      const session = state.sessionId,
+        orders = await api.request('/orders');
+      if (
+        !current() ||
+        session !== state.sessionId ||
+        pending ||
+        document.hidden ||
+        JSON.stringify(orders) === JSON.stringify(state.orders)
+      )
+        return;
+      state.orders = orders;
+      if (document.body.dataset.screen !== 'account') return;
+      const next = document.createElement('div');
+      next.innerHTML = render();
+      const regions = ['.c-nav', '.c-top'];
+      if (state.page === 'overview') regions.push('.c-content');
+      if (state.page === 'orders') regions.push('#c-filter-results');
+      patchOrderRegions(next, regions);
+      if (state.detail) {
+        const order = orders.find((o) => o.id === state.detail);
+        if (order) {
+          const layer = document.createElement('div');
+          layer.innerHTML = serverText(views.orderDrawer(order));
+          layer.querySelector('.c-demo-tools')?.remove();
+          patchOrderRegions(layer, [
+            '.c-drawer-status',
+            '.c-drawer-tabs',
+            state.detailTab === 'chat' ? '.c-chat-log' : '.c-drawer-body',
+          ]);
+        }
+      }
+    },
+  });
   async function refresh() {
     const orders = await api.request('/orders');
     state.orders = orders;
@@ -230,6 +269,17 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
     });
     state.orders = state.orders.map((o) => (o.id === id ? saved : o));
   }
+  function success(order) {
+    modal(
+      views
+        .successHTML(order)
+        .replace('Заказ оформлен в прототипе', 'Заказ сохранён на сервере')
+        .replace(
+          'Это локальный пример: данные в реальную типографию не отправлены.',
+          'Заказ доступен сотруднику в серверном кабинете.',
+        ),
+    );
+  }
   async function submit() {
     const result = quote();
     if (result.error) throw Error(result.error);
@@ -247,19 +297,18 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
     state.draft = blank();
     saveDraft();
     state.page = 'overview';
-    modal(
-      views
-        .successHTML(order)
-        .replace('Заказ оформлен в прототипе', 'Заказ сохранён на сервере')
-        .replace(
-          'Это локальный пример: данные в реальную типографию не отправлены.',
-          'Заказ доступен сотруднику в серверном кабинете.',
-        ),
-    );
+    success(order);
   }
   async function click(button) {
     const d = button.dataset;
+    if (button.hasAttribute('data-c-studio') || d.cPreset) {
+      state.page = 'merch';
+      state.merchMode = 'studio';
+      if (d.cPreset) studio.preset(d.cPreset);
+      return;
+    }
     if (d.cPage) {
+      if (d.cPage === 'merch') state.merchMode = 'collection';
       state.page = d.cPage;
       state.uploadError = '';
       await refresh();
@@ -324,6 +373,10 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
     }
     if (button.hasAttribute('data-c-preview-draft'))
       return openServerPDF(api, '/files/' + state.draft.fileKey);
+    if (d.cDesignPreview) {
+      const order = state.orders.find((o) => o.id === d.cDesignPreview);
+      return openServerPDF(api, '/orders/' + order.id + '/files/' + order.previewKey);
+    }
     if (d.cOpenFile) return openServerPDF(api, '/orders/' + d.cOpenFile + '/file');
     if (d.cSuccessOrder) {
       closeModal();
@@ -351,6 +404,16 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
     }
     if (d.cRepeat) {
       const o = state.orders.find((o) => o.id === d.cRepeat);
+      if (o.kind === 'merch') {
+        const file = await api.request('/orders/' + o.id + '/files/' + o.designKey, { blob: true });
+        const design = JSON.parse(await file.text());
+        closeDrawer();
+        state.page = 'merch';
+        state.merchMode = 'studio';
+        draw();
+        await studio.loadDesign(design);
+        return;
+      }
       state.draft = { ...blank(), ...o.params, files: o.files, step: 2 };
       syncFiles(o.files);
       closeDrawer();
@@ -369,7 +432,7 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
         return;
       const button = event.target.closest('button');
       if (!button) {
-        if (!localMerch && event.target.classList.contains('c-drawer-backdrop')) closeDrawer();
+        if (event.target.classList.contains('c-drawer-backdrop')) closeDrawer();
         return;
       }
       const d = button.dataset;
@@ -377,18 +440,6 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
         event.preventDefault();
         event.stopImmediatePropagation();
         return;
-      }
-      if (d.cPage === 'merch' || button.hasAttribute('data-c-studio') || d.cPreset) {
-        if (!localMerch) {
-          localMerch = true;
-          local.render(localUser());
-        }
-        return;
-      }
-      if (localMerch) {
-        if (!d.cPage || d.cPage === 'merch') return;
-        local.reset();
-        localMerch = false;
       }
       if (!Object.keys(d).some((key) => /^c[A-Z]/.test(key))) return;
       event.preventDefault();
@@ -407,7 +458,7 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
     true,
   );
   document.addEventListener('change', (event) => {
-    if (!current() || localMerch) return;
+    if (!current()) return;
     const el = event.target;
     if (el.dataset.cSelect) {
       state.draft[el.dataset.cSelect] = el.value;
@@ -425,7 +476,7 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
     }
   });
   document.addEventListener('input', (event) => {
-    if (!current() || localMerch) return;
+    if (!current()) return;
     const el = event.target;
     if (['c-range', 'c-comment', 'c-copies'].includes(el.id)) {
       state.draft[{ 'c-range': 'range', 'c-comment': 'comment', 'c-copies': 'copies' }[el.id]] =
@@ -494,8 +545,7 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
     }
   });
   document.addEventListener('submit', (event) => {
-    if (!current() || localMerch || !['c-chat-form', 'c-profile-form'].includes(event.target.id))
-      return;
+    if (!current() || !['c-chat-form', 'c-profile-form'].includes(event.target.id)) return;
     event.preventDefault();
     const text = $('#c-message')?.value.trim();
     const profile =
@@ -516,7 +566,7 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
     });
   });
   document.addEventListener('keydown', (event) => {
-    if (!current() || localMerch) return;
+    if (!current()) return;
     if (event.key === 'Escape' && state.detail) closeDrawer();
     if (event.ctrlKey && event.key === 'Enter' && event.target.id === 'c-message') {
       event.preventDefault();
@@ -538,22 +588,52 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
   return {
     load,
     render,
-    isLocal: () => localMerch,
+    openPage(page) {
+      state.page = page;
+      state.merchMode = 'collection';
+      draw();
+    },
     home() {
-      if (localMerch) local.home();
       state.page = 'overview';
     },
     activeCount() {
       return state.orders.filter((o) => !['issued', 'cancelled'].includes(o.status)).length;
     },
-    createStudioOrder: (...args) => local.createStudioOrder(...args),
+    async createStudioOrder(design, preview) {
+      if (pending) throw Error('Дождись завершения операции.');
+      pending = true;
+      const owner = current(),
+        session = state.sessionId;
+      try {
+        const files = await studio.productionFiles(design);
+        if (owner !== current() || session !== state.sessionId) throw Error('Сессия изменилась.');
+        const body = new FormData();
+        body.set(
+          'design',
+          new Blob([JSON.stringify(design)], { type: 'application/json' }),
+          'design.json',
+        );
+        body.set('preview', preview, 'preview.png');
+        for (const [side, blob] of Object.entries(files))
+          body.set(side, blob, 'print-' + side + '.png');
+        const order = await api.request('/orders', { method: 'POST', body });
+        state.orders.unshift(order);
+        state.page = 'overview';
+        state.merchMode = 'collection';
+        draw();
+        success(order);
+        return order.id;
+      } finally {
+        if (owner === current() && session === state.sessionId) pending = false;
+      }
+    },
     reset() {
       closeDrawer();
-      local.reset();
-      localMerch = false;
+      polling.stop();
       pending = false;
       messageDrafts.clear();
-      Object.assign(state, createCustomerState());
+      const session = state.sessionId + 1;
+      Object.assign(state, createCustomerState(), { sessionId: session });
     },
   };
 }

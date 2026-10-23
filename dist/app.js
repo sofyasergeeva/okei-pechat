@@ -16,20 +16,21 @@ const studio = createStudio({
   notify,
   placeOrder: (design, preview) => customer.createStudioOrder(design, preview),
 });
-const localCustomer = createCustomer({
-  window,
-  document,
-  storage: localStorage,
-  indexedDB,
-  orderMath: globalThis.OrderMath,
-  ui: window.OkeiUI,
-  studio,
-  notify,
-  enabled: () => !serverMode || customer?.isLocal(),
-});
+const localCustomer = serverMode
+  ? null
+  : createCustomer({
+      window,
+      document,
+      storage: localStorage,
+      indexedDB,
+      orderMath: globalThis.OrderMath,
+      ui: window.OkeiUI,
+      studio,
+      notify,
+    });
 const api = serverMode ? createApiClient() : null;
 customer = serverMode
-  ? createServerCustomer({ api, ui: window.OkeiUI, studio, local: localCustomer, notify })
+  ? createServerCustomer({ api, ui: window.OkeiUI, studio, notify })
   : localCustomer;
 const staff = serverMode
   ? createServerStaff({ api, ui: window.OkeiUI, notify })

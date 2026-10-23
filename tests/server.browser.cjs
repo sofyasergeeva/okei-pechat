@@ -112,7 +112,7 @@ test('Server: independent customer/staff contexts exchange PDF orders, statuses 
     await staff.close();
   }
 });
-test('Server: failed order request preserves draft; local merch remains separate', async ({
+test('Server: failed order request preserves draft; merch joins the server queue', async ({
   page,
 }) => {
   const errors = [];
@@ -147,13 +147,12 @@ test('Server: failed order request preserves draft; local merch remains separate
   await page.locator('#modal .close').click();
   expect(
     await page.evaluate(() =>
-      Object.keys(localStorage)
-        .filter((k) => k.startsWith('okei-customer-v1:server-merch:'))
-        .map((k) => JSON.parse(localStorage.getItem(k)).orders.length),
+      Object.keys(localStorage).filter((k) => k.startsWith('okei-customer-v1:server-merch:')),
     ),
-  ).toEqual([1]);
+  ).toEqual([]);
   await page.locator('.c-nav [data-c-page=orders]').click();
-  await expect(page.locator('.c-order-row')).toHaveCount(1);
+  await expect(page.locator('.c-order-row')).toHaveCount(2);
+  await expect(page.locator('.c-order-row').filter({ hasText: 'Футболка' })).toHaveCount(1);
   await expect(page.locator('.c-prototype-note')).toContainText('Серверный режим');
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.c-nav')).toBeVisible();
@@ -273,6 +272,174 @@ test('Server: multiple PDFs can be replaced, removed, downloaded and cancelled o
       path: info.outputPath('multiple-pdf-staff-mobile.png'),
       animations: 'disabled',
     });
+    expect(errors).toEqual([]);
+  } finally {
+    await customer.close();
+    await staff.close();
+  }
+});
+
+test('Server: merch production files and polling preserve customer/staff drafts and focus', async ({
+  browser,
+}, info) => {
+  test.setTimeout(75000); // Two roles, three PNG downloads and several controlled polling cycles.
+  const customer = await browser.newContext(),
+    staff = await browser.newContext(),
+    page = await customer.newPage(),
+    operator = await staff.newPage();
+  const errors = [];
+  for (const p of [page, operator]) p.on('pageerror', (error) => errors.push(error.message));
+  try {
+    await page.clock.install();
+    await operator.clock.install();
+    await register(page, 'browser_merch_poll');
+    await page.locator('.c-nav [data-c-page=merch]').click();
+    await page.locator('[data-c-preset=ahead]').first().click();
+    await expect(page.locator('#s-canvas')).toBeVisible();
+    await page.locator('#s-title').fill('Polling merch');
+    await page.locator('#s-count').fill('2');
+    await page.locator('#s-count').press('Tab');
+    await page.locator('[data-s-order]').click();
+    await page.locator('#s-confirm-order').click();
+    await expect(page.locator('#modalContent')).toContainText('1 900 ₽');
+    await page.locator('[data-c-success-order]').click();
+    await page.locator('.c-drawer-tabs [data-c-drawer-tab=chat]').click();
+    await page.locator('#c-message').fill('Черновик заказчика');
+    await page.locator('#c-message').evaluate((node) => {
+      node.focus();
+      node.setSelectionRange(3, 7);
+      window.__chatNode = node;
+    });
+    await login(operator, 'browser_operator');
+    await operator.locator('#w-search').fill('Polling merch');
+    await operator.locator('.w-order').click();
+    await expect(operator.locator('.w-merch-preview img')).toBeVisible();
+    await expect
+      .poll(() => operator.locator('.w-merch-preview img').evaluate((node) => node.naturalWidth))
+      .toBeGreaterThan(0);
+    const downloading = operator.waitForEvent('download');
+    await operator.locator('[data-w-design]').click();
+    const json = await downloading;
+    const design = JSON.parse(
+      await require('node:fs/promises').readFile(await json.path(), 'utf8'),
+    );
+    expect(design.title).toBe('Polling merch');
+    expect(design.count).toBe(2);
+    expect(design.back.length).toBeGreaterThan(0);
+    for (const kind of ['preview', 'front', 'back']) {
+      const download = operator.waitForEvent('download');
+      await operator
+        .locator('.w-file-actions a[download]')
+        .filter({
+          hasText:
+            kind === 'preview'
+              ? 'Скачать превью'
+              : kind === 'front'
+                ? 'Принт спереди'
+                : 'Принт сзади',
+        })
+        .click();
+      const file = await download;
+      const bytes = await require('node:fs/promises').readFile(await file.path());
+      const { PNG } = require('../node_modules/playwright-core/lib/utilsBundle.js'),
+        png = PNG.sync.read(bytes);
+      expect([png.width, png.height]).toEqual(kind === 'preview' ? [1440, 1000] : [2400, 3368]);
+      if (kind !== 'preview') {
+        expect(png.data[3]).toBe(0);
+        expect(png.data.some((v, i) => i % 4 === 3 && v > 0)).toBeTruthy();
+      }
+    }
+    await operator.screenshot({
+      path: info.outputPath('server-merch-staff.png'),
+      animations: 'disabled',
+    });
+    await operator.locator('[data-w-tab=chat]').first().click();
+    await operator.locator('#w-message').fill('Уточнение по мерчу');
+    await operator.locator('#w-chat-form button[type=submit]').click();
+    await page.clock.fastForward(27000);
+    await expect(page.locator('#c-chat-log')).toContainText('Уточнение по мерчу');
+    await expect(page.locator('#c-message')).toHaveValue('Черновик заказчика');
+    expect(
+      await page
+        .locator('#c-message')
+        .evaluate(
+          (node) =>
+            node === window.__chatNode &&
+            document.activeElement === node &&
+            node.selectionStart === 3 &&
+            node.selectionEnd === 7,
+        ),
+    ).toBeTruthy();
+    await operator.locator('#w-message').fill('Черновик сотрудника');
+    await operator.locator('#w-message').evaluate((node) => {
+      node.focus();
+      node.setSelectionRange(2, 5);
+      window.__staffChatNode = node;
+    });
+    await page.locator('#c-chat-form button[type=submit]').click();
+    await operator.clock.fastForward(27000);
+    await expect(operator.locator('.w-messages')).toContainText('Черновик заказчика');
+    await expect(operator.locator('#w-message')).toHaveValue('Черновик сотрудника');
+    expect(
+      await operator
+        .locator('#w-message')
+        .evaluate(
+          (node) =>
+            node === window.__staffChatNode &&
+            document.activeElement === node &&
+            node.selectionStart === 2,
+        ),
+    ).toBeTruthy();
+    await operator.locator('[data-w-tab=info]').click();
+    await operator.locator('[data-w-checked]').check();
+    await operator.locator('[data-w-next=work]').click();
+    await expect(operator.locator('[data-w-start-printing]')).toHaveText(/Начать изготовление/);
+    await operator.locator('[data-w-start-printing]').click();
+    await page.clock.fastForward(27000);
+    await page.locator('[data-c-drawer-tab=info]').click();
+    await expect(page.locator('.c-drawer')).toContainText('Изготовление начато:');
+    await expect(page.locator('[data-c-cancel]')).toHaveCount(0);
+    await page.locator('[data-c-close]').click();
+    await page.locator('.c-nav [data-c-page=profile]').click();
+    await page.locator('#c-profile-name').fill('Несохранённое имя');
+    await page.locator('#c-profile-name').evaluate((node) => {
+      window.__profileNode = node;
+      node.focus();
+      node.setSelectionRange(1, 4);
+    });
+    const scroll = await page.evaluate(() => scrollY);
+    let failed = false;
+    await page.route('**/api/orders', async (route) => {
+      if (route.request().method() === 'GET' && !failed) {
+        failed = true;
+        await route.abort();
+      } else await route.continue();
+    });
+    await page.clock.fastForward(27000);
+    await expect.poll(() => failed).toBeTruthy();
+    await page.clock.fastForward(27000);
+    await page.unroute('**/api/orders');
+    await expect(page.locator('#c-profile-name')).toHaveValue('Несохранённое имя');
+    expect(
+      await page
+        .locator('#c-profile-name')
+        .evaluate(
+          (node) =>
+            node === window.__profileNode &&
+            document.activeElement === node &&
+            node.selectionStart === 1,
+        ),
+    ).toBeTruthy();
+    expect(await page.evaluate(() => scrollY)).toBe(scroll);
+    let reads = 0;
+    page.on('request', (request) => {
+      if (request.url().endsWith('/api/orders') && request.method() === 'GET') reads++;
+    });
+    await page.locator('[data-action=logout]').click();
+    await expect(page.locator('#authForm')).toBeVisible();
+    const before = reads;
+    await page.clock.fastForward(54000);
+    expect(reads).toBe(before);
     expect(errors).toEqual([]);
   } finally {
     await customer.close();

@@ -159,18 +159,29 @@ export function createStudio({ document, indexedDB, notify, placeOrder }) {
       toast('Не удалось прочитать изображение. Попробуй другой файл.');
     }
   }
+  async function printBlob(design, side) {
+    const c = document.createElement('canvas');
+    c.width = 2400;
+    c.height = 3368;
+    for (const o of design[side])
+      await drawObject(c.getContext('2d'), o, { x: 0, y: 0, w: c.width, h: c.height });
+    const blob = await new Promise((resolve) => c.toBlob(resolve, 'image/png'));
+    if (!blob) throw Error('Не удалось подготовить PNG.');
+    return blob;
+  }
+  async function productionFiles(design) {
+    const files = {};
+    for (const side of ['front', 'back'])
+      if (design[side].length) files[side] = await printBlob(design, side);
+    return files;
+  }
   async function exportSide() {
     if (!state.design[state.side].length) {
       toast('На этой стороне пока нет принта. Добавь элемент или выбери другую сторону.');
       return;
     }
     try {
-      const c = document.createElement('canvas');
-      c.width = 2400;
-      c.height = 3368;
-      for (const o of state.design[state.side])
-        await drawObject(c.getContext('2d'), o, { x: 0, y: 0, w: c.width, h: c.height });
-      const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+      const blob = await printBlob(state.design, state.side);
       download(blob, 'okei-print-' + state.side + '.png');
       toast('Скачан принт текущей стороны на прозрачном фоне.');
     } catch {
@@ -360,5 +371,5 @@ export function createStudio({ document, indexedDB, notify, placeOrder }) {
       toast,
     },
   });
-  return { view, mount, preset, loadDesign };
+  return { view, mount, preset, loadDesign, productionFiles };
 }
