@@ -41,7 +41,7 @@ function orderFixture(status = 'new', id = '2001') {
 
 // This is a logic harness, not a DOM or IndexedDB conformance implementation.
 // Each instance owns its VM, JSON storage, blobs, event listeners and UI observations.
-function createCustomerHarness({ orders = [] } = {}) {
+function createCustomerHarness({ orders = [], draft = null } = {}) {
   const values = new Map();
   const files = new Map();
   const elements = new Map();
@@ -184,7 +184,7 @@ function createCustomerHarness({ orders = [] } = {}) {
   runSource(context, 'customer.js');
 
   const keyFor = (id) => 'okei-customer-v1:' + id;
-  storage.setItem(keyFor('alice'), JSON.stringify({ orders }));
+  storage.setItem(keyFor('alice'), JSON.stringify({ orders, draft }));
   let currentId = null;
   function login(id) {
     if (currentId !== null) window.Customer.reset();

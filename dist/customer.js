@@ -594,8 +594,11 @@
         unread: 0,
       };
       orders.unshift(o);
-      draft = blank();
-      persist('orders', { clearDraft: true });
+      if (!persist('orders', { clearDraft: true })) {
+        loading = false;
+        draw();
+        return;
+      }
       loading = false;
       page = 'overview';
       draw(true);
@@ -844,7 +847,11 @@
       if (o?.status === 'new') {
         o.status = 'cancelled';
         o.events.push({ status: 'cancelled', time: new Date().toISOString() });
-        persist('orders');
+        if (!persist('orders')) {
+          closeMainModal();
+          draw();
+          return;
+        }
       }
       closeMainModal();
       draw();
@@ -906,7 +913,11 @@
       if (next) {
         o.status = next;
         o.events.push({ status: next, time: new Date().toISOString() });
-        persist('orders');
+        if (!persist('orders')) {
+          draw();
+          renderDrawer();
+          return;
+        }
         draw();
         renderDrawer();
         notice('Статус изменён только для демонстрации.');
@@ -938,7 +949,6 @@
     if (b.hasAttribute('data-c-confirm-merch')) {
       if (!pendingMerch) return;
       const d = pendingMerch;
-      pendingMerch = null;
       const o = {
         id: String(Math.max(1045, ...orders.map((o) => Number(o.id))) + 1),
         kind: 'merch',
@@ -953,7 +963,8 @@
         unread: 0,
       };
       orders.unshift(o);
-      persist('orders');
+      if (!persist('orders')) return;
+      pendingMerch = null;
       closeMainModal();
       page = 'overview';
       draw(true);
@@ -1027,7 +1038,7 @@
         o.status = 'review';
         o.events.push({ status: 'review', time: new Date().toISOString() });
       }
-      persist('orders');
+      if (!persist('orders')) return;
       draw();
       renderDrawer();
       $('#c-message').focus();
@@ -1042,7 +1053,7 @@
         return;
       }
       profile = { name, group };
-      persist('profile');
+      if (!persist('profile')) return;
       draw();
       notice('Профиль сохранён.');
     }
@@ -1098,7 +1109,8 @@
         unread: 0,
       };
       orders.unshift(o);
-      persist('orders');
+      if (!persist('orders'))
+        throw Error('Заказ не сохранён. Проверь свободное место и повтори попытку.');
       page = 'overview';
       draw(true);
       openSuccess(o);

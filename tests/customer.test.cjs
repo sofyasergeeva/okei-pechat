@@ -3,6 +3,47 @@ const assert = require('node:assert/strict');
 const { Blob } = require('node:buffer');
 const { createCustomerHarness, orderFixture } = require('./customer-harness.cjs');
 
+test('К2: отказ оформления PDF сохраняет черновик и файл; повторная попытка создаёт один заказ', async () => {
+  const draft = {
+    ...orderFixture().params,
+    step: 3,
+    fileKey: 'pdf-test',
+    fileName: 'test-document.pdf',
+    fileSize: 3,
+    range: '',
+    useRange: false,
+    comment: 'Не терять комментарий',
+  };
+  const app = createCustomerHarness({ draft });
+  const file = new Blob(['pdf'], { type: 'application/pdf' });
+  app.files.set(draft.fileKey, file);
+  app.storage.failWrites = true;
+  await app.click({ cNext: '' });
+  assert.deepEqual(app.data().draft, draft);
+  assert.equal(app.files.get(draft.fileKey), file);
+  assert.equal(app.data().orders.length, 0);
+  assert.equal(app.element('#modal').hidden, true);
+  assert.ok(app.notices.some((message) => message.includes('Не удалось сохранить')));
+
+  app.storage.failWrites = false;
+  await app.click({ cNext: '' });
+  assert.equal(app.data().orders.length, 1);
+  assert.equal(app.data().orders[0].fileKey, draft.fileKey);
+  assert.equal(app.data().orders[0].comment, draft.comment);
+  assert.equal(app.data().draft.fileKey, '');
+});
+
+test('К2: повтор сохранения макета после отказа не дублирует заказ', async () => {
+  const app = createCustomerHarness();
+  const design = { title: 'Retry', size: 'M', count: 1 };
+  const preview = new Blob(['preview']);
+  app.storage.failWrites = true;
+  await assert.rejects(app.customer.createStudioOrder(design, preview), /Заказ не сохранён/);
+  app.storage.failWrites = false;
+  await app.customer.createStudioOrder(design, preview);
+  assert.equal(app.data().orders.length, 1);
+});
+
 test('К1: черновик сохраняет свежие заказы и дополнительные поля существующего хранилища', async () => {
   const app = createCustomerHarness({ orders: [orderFixture('work')] });
   const stored = app.data();
@@ -124,4 +165,17 @@ test('К1: сохранение профиля не перезаписывает
     { status: 'ready', messages: employeeData.orders[0].messages },
     'Изменения сотрудника должны пережить сохранение профиля заказчиком',
   );
+});
+
+test('К2: отказ localStorage не показывает успешное оформление', async () => {
+  const app = createCustomerHarness();
+  app.storage.failWrites = true;
+  await app.customer
+    .createStudioOrder({ title: 'Quota test', size: 'M', count: 1 }, new Blob(['preview']))
+    .catch(() => {}); // A future implementation may reject or report the failure through the UI.
+
+  assert.ok(app.storage.failedWrites > 0, 'Отказ записи должен действительно произойти');
+  assert.equal(app.data().orders.length, 0);
+  assert.equal(app.element('#modal').hidden, true, 'Нельзя открывать окно успеха после отказа');
+  assert.doesNotMatch(app.element('#modalContent').innerHTML, /data-c-success-order=/);
 });
