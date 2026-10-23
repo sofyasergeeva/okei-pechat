@@ -1,9 +1,152 @@
 <!doctype html>
-<html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#edf3fd"><title>ОКЭИ Печать — кабинет заказчика · дизайн-превью</title><meta name="description" content="Типография ОКЭИ: печать PDF, активные заказы и конструктор мерча. Светлая и тёмная тема."><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/customer.css"><link rel="stylesheet" href="/living.css"><link rel="stylesheet" href="/studio.css"><link rel="stylesheet" href="/editorial.css"><link rel="stylesheet" href="/refine.css"><link rel="stylesheet" href="/staff.css"></head>
-<body data-theme="glass" data-screen="home"><div class="ambient" aria-hidden="true"><i></i><i></i></div>
-<div class="site-shell"><header class="header"><div class="header-left"><button class="brand" data-go="home" aria-label="ОКЭИ Печать — главная"><img src="/assets/college-red.svg" alt=""><span>ОКЭИ <b>ПЕЧАТЬ</b><small>Типография колледжа</small></span></button><nav aria-label="Услуги типографии"><button data-modal="services">Услуги</button><button data-modal="prices">Прайс</button></nav></div><div class="header-actions"><div class="theme-switch" role="group" aria-label="Цветовая тема"><button data-theme-choice="sky" aria-label="Светлая тема" aria-pressed="false" title="Светлая тема"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg></button><button data-theme-choice="glass" aria-label="Тёмная тема" aria-pressed="true" title="Тёмная тема" class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20 14.2A8.5 8.5 0 0 1 9.8 4a8.5 8.5 0 1 0 10.2 10.2Z"/></svg></button></div><button id="accountButton" class="header-login" data-go="login">Войти <span><svg class="ui-icon ui-arrow" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19 19 5M5 5h14v14"/></svg></span></button></div></header>
-<section class="visit-bar" aria-label="Адрес и график типографии"><div class="visit-location"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M19 10c0 5-7 11-7 11S5 15 5 10a7 7 0 1 1 14 0Z"/><circle cx="12" cy="10" r="2"/></svg><span>Чкалова, 11 <small>Оренбург · ОКЭИ</small></span></div><details class="hours-details"><summary><span class="hours-status"><i></i><span id="workingStatus">График типографии</span></span><span class="hours-action"><span id="dayHours">Сегодня 09:00 — 17:00</span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m4 6 4 4 4-4"/></svg></span></summary><div class="hours-popover"><div class="hours-title">График типографии<span>Чкалова, 11</span></div><div class="modal-row"><span>Пн — Чт</span><strong>09:00 — 17:00</strong></div><div class="modal-row"><span>Пятница</span><strong>09:00 — 16:40</strong></div><div class="modal-row"><span>Обед</span><strong>13:00 — 13:45</strong></div><div class="modal-row"><span>Сб — Вс</span><strong>Выходные</strong></div><p>Дождись статуса «Готов», прежде чем идти за заказом. Оплата безналичная.</p></div></details></section>
-<main id="main"></main><footer class="footer"><span>© ОКЭИ ПЕЧАТЬ · 2026</span><span>Чкалова, 11 · Оренбург</span><span class="preview-label">Дизайн-превью</span></footer></div>
-<div class="modal-overlay" id="modal" hidden><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" tabindex="-1"><button class="close" aria-label="Закрыть окно">×</button><div id="modalContent"></div></section></div><div id="toast" role="status" aria-live="polite"></div>
-<template id="pdf"><div class="pdf-sculpture" aria-hidden="true"><div class="sculpture-shadow"></div><div class="paper-stack paper-back"><span></span><span></span><span></span></div><div class="paper-stack paper-mid"><span></span><span></span><span></span></div><div class="pdf-object"><div class="pdf-fold"></div><svg viewBox="0 0 100 100"><path d="M48 16c-10 0-5 23 2 40 9 20 20 29 28 20 9-10-27-17-49-8-23 10-17 22-7 15 13-9 22-32 26-47 4-15 3-20 0-20z" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"/></svg><b>PDF</b><small>ГОТОВО К ПЕЧАТИ</small></div><div class="sculpture-arrow"><svg class="ui-icon ui-arrow" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19 19 5M5 5h14v14"/></svg></div><span class="sculpture-orbit"></span><span class="sculpture-cross">+</span></div></template>
-<script src="/ui.js"></script><script src="/order-math.js"></script><script src="/studio.js"></script><script src="/living.js"></script><script src="/customer.js"></script><script src="/staff.js"></script><script src="/app.js"></script><script src="/controls.js"></script></body></html>
+<html lang="ru"
+  ><head
+    ><meta charset="UTF-8" /><meta
+      name="viewport"
+      content="width=device-width,initial-scale=1" /><meta
+      name="theme-color"
+      content="#edf3fd" /><title>ОКЭИ Печать — кабинет заказчика · дизайн-превью</title
+    ><meta
+      name="description"
+      content="Типография ОКЭИ: печать PDF, активные заказы и конструктор мерча. Светлая и тёмная тема." /><link
+      rel="icon"
+      href="/favicon.svg" /><link rel="stylesheet" href="/style.css" /><link
+      rel="stylesheet"
+      href="/customer.css" /><link rel="stylesheet" href="/living.css" /><link
+      rel="stylesheet"
+      href="/studio.css" /><link rel="stylesheet" href="/editorial.css" /><link
+      rel="stylesheet"
+      href="/refine.css" /><link rel="stylesheet" href="/staff.css"
+  /></head>
+  <body data-theme="glass" data-screen="home"
+    ><div class="ambient" aria-hidden="true"><i></i><i></i></div>
+    <div class="site-shell"
+      ><header class="header"
+        ><div class="header-left"
+          ><button class="brand" data-go="home" aria-label="ОКЭИ Печать — главная"
+            ><img src="/assets/college-red.svg" alt="" /><span
+              >ОКЭИ <b>ПЕЧАТЬ</b><small>Типография колледжа</small></span
+            ></button
+          ><nav aria-label="Услуги типографии"
+            ><button data-modal="services">Услуги</button
+            ><button data-modal="prices">Прайс</button></nav
+          ></div
+        ><div class="header-actions"
+          ><div class="theme-switch" role="group" aria-label="Цветовая тема"
+            ><button
+              data-theme-choice="sky"
+              aria-label="Светлая тема"
+              aria-pressed="false"
+              title="Светлая тема"
+              ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                <circle cx="12" cy="12" r="4" />
+                <path
+                  d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"
+                /></svg></button
+            ><button
+              data-theme-choice="glass"
+              aria-label="Тёмная тема"
+              aria-pressed="true"
+              title="Тёмная тема"
+              class="active"
+              ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                <path
+                  d="M20 14.2A8.5 8.5 0 0 1 9.8 4a8.5 8.5 0 1 0 10.2 10.2Z"
+                /></svg></button></div
+          ><button id="accountButton" class="header-login" data-go="login"
+            >Войти
+            <span
+              ><svg
+                class="ui-icon ui-arrow"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+                focusable="false"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M5 19 19 5M5 5h14v14" /></svg></span></button></div
+      ></header>
+      <section class="visit-bar" aria-label="Адрес и график типографии"
+        ><div class="visit-location"
+          ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M19 10c0 5-7 11-7 11S5 15 5 10a7 7 0 1 1 14 0Z" />
+            <circle cx="12" cy="10" r="2" /></svg
+          ><span>Чкалова, 11 <small>Оренбург · ОКЭИ</small></span></div
+        ><details class="hours-details"
+          ><summary
+            ><span class="hours-status"
+              ><i></i><span id="workingStatus">График типографии</span></span
+            ><span class="hours-action"
+              ><span id="dayHours">Сегодня 09:00 — 17:00</span
+              ><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="m4 6 4 4 4-4" /></svg></span></summary
+          ><div class="hours-popover"
+            ><div class="hours-title">График типографии<span>Чкалова, 11</span></div
+            ><div class="modal-row"><span>Пн — Чт</span><strong>09:00 — 17:00</strong></div
+            ><div class="modal-row"><span>Пятница</span><strong>09:00 — 16:40</strong></div
+            ><div class="modal-row"><span>Обед</span><strong>13:00 — 13:45</strong></div
+            ><div class="modal-row"><span>Сб — Вс</span><strong>Выходные</strong></div
+            ><p>Дождись статуса «Готов», прежде чем идти за заказом. Оплата безналичная.</p></div
+          ></details
+        ></section
+      >
+      <main id="main"></main
+      ><footer class="footer"
+        ><span>© ОКЭИ ПЕЧАТЬ · 2026</span><span>Чкалова, 11 · Оренбург</span
+        ><span class="preview-label">Дизайн-превью</span></footer
+      ></div
+    >
+    <div class="modal-overlay" id="modal" hidden
+      ><section
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="modalTitle"
+        tabindex="-1"
+        ><button class="close" aria-label="Закрыть окно">×</button
+        ><div id="modalContent"></div></section></div
+    ><div id="toast" role="status" aria-live="polite"></div>
+    <template id="pdf"
+      ><div class="pdf-sculpture" aria-hidden="true"
+        ><div class="sculpture-shadow"></div
+        ><div class="paper-stack paper-back"><span></span><span></span><span></span></div
+        ><div class="paper-stack paper-mid"><span></span><span></span><span></span></div
+        ><div class="pdf-object"
+          ><div class="pdf-fold"></div
+          ><svg viewBox="0 0 100 100">
+            <path
+              d="M48 16c-10 0-5 23 2 40 9 20 20 29 28 20 9-10-27-17-49-8-23 10-17 22-7 15 13-9 22-32 26-47 4-15 3-20 0-20z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="5"
+              stroke-linecap="round"
+            /></svg
+          ><b>PDF</b><small>ГОТОВО К ПЕЧАТИ</small></div
+        ><div class="sculpture-arrow"
+          ><svg
+            class="ui-icon ui-arrow"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            focusable="false"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M5 19 19 5M5 5h14v14" /></svg></div
+        ><span class="sculpture-orbit"></span><span class="sculpture-cross">+</span></div
+      ></template
+    >
+    <script src="/ui.js"></script
+    ><script src="/order-math.js"></script
+    ><script src="/studio.js"></script
+    ><script src="/living.js"></script
+    ><script src="/customer.js"></script
+    ><script src="/staff.js"></script
+    ><script src="/app.js"></script
+    ><script src="/controls.js"></script></body
+></html>
