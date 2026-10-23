@@ -126,6 +126,7 @@ function createCustomerHarness({ orders = [], draft = null } = {}) {
   element('#modal').hidden = true;
 
   let writeGate = null;
+  let readGate = null;
   const indexedDB = {
     open() {
       const request = {};
@@ -150,10 +151,16 @@ function createCustomerHarness({ orders = [], draft = null } = {}) {
                   },
                   get(key) {
                     const read = {};
-                    queueMicrotask(() => {
+                    const complete = () => {
                       read.result = files.get(key);
                       read.onsuccess?.();
-                    });
+                    };
+                    if (readGate) {
+                      const gate = readGate;
+                      readGate = null;
+                      gate.release = () => queueMicrotask(complete);
+                      gate.markStarted();
+                    } else queueMicrotask(complete);
                     return read;
                   },
                 };
@@ -223,6 +230,19 @@ function createCustomerHarness({ orders = [], draft = null } = {}) {
         started,
         resume() {
           if (!gate.release) throw new Error('Wait for started before resuming the write');
+          gate.release();
+        },
+      };
+    },
+    pauseNextFileRead() {
+      if (readGate) throw new Error('A file read is already paused');
+      const gate = {};
+      const started = new Promise((resolve) => (gate.markStarted = resolve));
+      readGate = gate;
+      return {
+        started,
+        resume() {
+          if (!gate.release) throw new Error('Wait for started before resuming the read');
           gate.release();
         },
       };

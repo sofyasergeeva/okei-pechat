@@ -71,6 +71,17 @@
     }
   }
   let savedOrders = new Map();
+  let sessionId = 0;
+  function captureSession() {
+    if (!user) throw Error('Сессия завершена. Войди снова и повтори действие.');
+    return { owner: key, id: sessionId };
+  }
+  function sessionCurrent(operation) {
+    return user !== null && key === operation.owner && sessionId === operation.id;
+  }
+  function checkSession(operation) {
+    if (!sessionCurrent(operation)) throw Error('Сессия изменилась. Операция отменена.');
+  }
   function rememberOrders() {
     savedOrders = new Map(orders.map((order) => [order.id, JSON.stringify(order)]));
   }
@@ -264,6 +275,7 @@
   function init(u) {
     const newKey = 'okei-customer-v1:' + u.id;
     if (key === newKey) return;
+    sessionId++;
     user = u;
     key = newKey;
     const saved = read(key, null);
@@ -272,6 +284,9 @@
     rememberOrders();
     draft = saved?.draft || blank();
     page = 'overview';
+    loading = false;
+    uploadError = '';
+    pendingMerch = null;
     persist();
   }
   const active = () =>
@@ -488,6 +503,7 @@
   }
   async function upload(file) {
     if (!file || loading) return;
+    const operation = captureSession();
     if (file.size > 25 * 1024 * 1024) {
       uploadError = 'Выбери PDF до 25 МБ.';
       draw();
@@ -501,15 +517,23 @@
     loading = true;
     uploadError = '';
     draw();
+    let pdf;
     try {
       const pdfjs = await import('/assets/pdf.mjs');
+      checkSession(operation);
       pdfjs.GlobalWorkerOptions.workerSrc = '/assets/pdf.worker.mjs';
-      const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+      const data = await file.arrayBuffer();
+      checkSession(operation);
+      pdf = await pdfjs.getDocument({ data }).promise;
+      checkSession(operation);
       const pages = pdf.numPages;
       await pdf.destroy();
+      pdf = null;
+      checkSession(operation);
       if (pages > 2000) throw Error('Для прототипа выбери документ до 2000 страниц.');
       const k = 'pdf-' + uid();
       await putFile(k, file);
+      checkSession(operation);
       draft = {
         ...draft,
         fileKey: k,
@@ -523,12 +547,17 @@
       persist();
       notice('PDF проверен · ' + pages + ' стр.');
     } catch (e) {
-      uploadError = e.message?.startsWith('Для прототипа')
-        ? e.message
-        : 'Не удалось прочитать PDF. Проверь файл и сними пароль, если он установлен.';
+      if (sessionCurrent(operation)) {
+        uploadError = e.message?.startsWith('Для прототипа')
+          ? e.message
+          : 'Не удалось прочитать PDF. Проверь файл и сними пароль, если он установлен.';
+      }
     } finally {
-      loading = false;
-      draw();
+      if (pdf) await pdf.destroy().catch(() => {});
+      if (sessionCurrent(operation)) {
+        loading = false;
+        draw();
+      }
     }
   }
   function bindUpload() {
@@ -550,18 +579,22 @@
   }
 
   async function sample() {
+    const operation = captureSession();
     try {
       const res = await fetch('/assets/sample.pdf');
+      checkSession(operation);
       if (!res.ok) throw Error();
-      await upload(
-        new File([await res.blob()], 'Пример печати · 3 страницы.pdf', { type: 'application/pdf' }),
-      );
+      const blob = await res.blob();
+      checkSession(operation);
+      await upload(new File([blob], 'Пример печати · 3 страницы.pdf', { type: 'application/pdf' }));
     } catch {
-      notice('Пример не загрузился. Выбери свой PDF.');
+      if (sessionCurrent(operation)) notice('Пример не загрузился. Выбери свой PDF.');
     }
   }
   async function submit() {
     if (loading) return;
+    const operation = captureSession();
+    const submittedDraft = { ...draft };
     const { q, selected, error } = currentQuote();
     if (error) {
       uploadError = error;
@@ -576,7 +609,12 @@
     loading = true;
     draw();
     try {
-      if (!(await getFile(draft.fileKey))) throw Error('Файл не найден. Загрузи его снова.');
+      const file = await getFile(submittedDraft.fileKey);
+      checkSession(operation);
+      if (!file) throw Error('Файл не найден. Загрузи его снова.');
+      if (JSON.stringify(draft) !== JSON.stringify(submittedDraft)) {
+        throw Error('Черновик изменился. Проверь параметры и повтори оформление.');
+      }
       const o = {
         id: String(Math.max(1045, ...orders.map((o) => Number(o.id))) + 1),
         kind: 'document',
@@ -604,9 +642,11 @@
       draw(true);
       openSuccess(o);
     } catch (e) {
-      loading = false;
-      uploadError = e.message;
-      draw();
+      if (sessionCurrent(operation)) {
+        loading = false;
+        uploadError = e.message;
+        draw();
+      }
     }
   }
   function modal(html) {
@@ -670,9 +710,11 @@
     drawerFocus?.focus?.();
   }
   async function openPDF(key) {
+    const operation = captureSession();
     const win = window.open('about:blank', '_blank');
     try {
       const file = await getFile(key);
+      checkSession(operation);
       if (!file) throw Error();
       const url = URL.createObjectURL(file);
       if (win) {
@@ -684,7 +726,8 @@
       }
     } catch {
       win?.close();
-      notice('PDF недоступен в этом браузере. Загрузите его ещё раз.');
+      if (sessionCurrent(operation))
+        notice('PDF недоступен в этом браузере. Загрузите его ещё раз.');
     }
   }
   function merchPage() {
@@ -866,18 +909,22 @@
     if (b.dataset.cRepeat) {
       const o = orders.find((o) => o.id === b.dataset.cRepeat);
       if (o.params.design === 'studio') {
+        const operation = captureSession();
         try {
           const file = await getFile(o.designKey);
+          checkSession(operation);
           if (!file) throw Error();
           const design = JSON.parse(await file.text());
+          checkSession(operation);
           closeDrawer();
           page = 'merch';
           merchMode = 'studio';
           draw(true);
           await window.Studio.loadDesign(design);
+          checkSession(operation);
           notice('Макет скопирован в конструктор.');
         } catch {
-          notice('Макет недоступен в этом браузере.');
+          if (sessionCurrent(operation)) notice('Макет недоступен в этом браузере.');
         }
         return;
       }
@@ -1084,10 +1131,13 @@
   });
   window.Customer = {
     async createStudioOrder(design, preview) {
+      const operation = captureSession();
       const orderKey = 'design-' + uid(),
         previewKey = 'preview-' + uid();
       await putFile(orderKey, new Blob([JSON.stringify(design)], { type: 'application/json' }));
+      checkSession(operation);
       await putFile(previewKey, preview);
+      checkSession(operation);
       const o = {
         id: String(Math.max(1045, ...orders.map((o) => Number(o.id))) + 1),
         kind: 'merch',
@@ -1121,8 +1171,11 @@
       page = 'overview';
     },
     reset() {
+      sessionId++;
       user = null;
       key = '';
+      loading = false;
+      pendingMerch = null;
       closeDrawer();
     },
     activeCount() {

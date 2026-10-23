@@ -688,7 +688,9 @@
     start();
   }
   async function loadDesign(d) {
+    const owner = user;
     if (loading) await loading;
+    if (user !== owner) throw Error('Пользователь изменился. Открытие макета отменено.');
     design = structuredClone(d);
     side = 'front';
     selected = null;

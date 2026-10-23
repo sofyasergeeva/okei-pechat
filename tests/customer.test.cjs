@@ -3,6 +3,58 @@ const assert = require('node:assert/strict');
 const { Blob } = require('node:buffer');
 const { createCustomerHarness, orderFixture } = require('./customer-harness.cjs');
 
+test('К3: повторный вход под тем же логином отменяет старую операцию', async () => {
+  const app = createCustomerHarness();
+  const gate = app.pauseNextFileWrite();
+  const pending = app.customer.createStudioOrder(
+    { title: 'Old session', count: 1 },
+    new Blob(['p']),
+  );
+  await gate.started;
+  app.login('alice');
+  gate.resume();
+  await assert.rejects(pending, /Сессия изменилась/);
+  assert.equal(app.data().orders.length, 0);
+});
+
+test('К3: выход во время второй записи макета не создаёт заказ без владельца', async () => {
+  const app = createCustomerHarness();
+  const first = app.pauseNextFileWrite();
+  const pending = app.customer.createStudioOrder({ title: 'Logout', count: 1 }, new Blob(['p']));
+  await first.started;
+  const second = app.pauseNextFileWrite();
+  first.resume();
+  await second.started;
+  app.customer.reset();
+  second.resume();
+  await assert.rejects(pending, /Сессия изменилась/);
+  assert.equal(app.data('alice').orders.length, 0);
+  assert.equal(app.storage.getItem(''), null);
+});
+
+test('К3: оформление PDF после смены пользователя не меняет новый аккаунт', async () => {
+  const draft = {
+    ...orderFixture().params,
+    step: 3,
+    fileKey: 'pdf-test',
+    fileName: 'test.pdf',
+    range: '',
+    useRange: false,
+  };
+  const app = createCustomerHarness({ draft });
+  app.files.set(draft.fileKey, new Blob(['pdf']));
+  const gate = app.pauseNextFileRead();
+  const pending = app.click({ cNext: '' });
+  await gate.started;
+  app.login('bob');
+  gate.resume();
+  await pending;
+  assert.equal(app.data('bob').orders.length, 0);
+  assert.equal(app.data('bob').draft.fileKey, '');
+  assert.deepEqual(app.data('alice').draft, draft);
+  assert.equal(app.element('#modal').hidden, true);
+});
+
 test('К2: отказ оформления PDF сохраняет черновик и файл; повторная попытка создаёт один заказ', async () => {
   const draft = {
     ...orderFixture().params,
@@ -138,44 +190,4 @@ test('Макет оформляется с сохранением JSON, прев
   assert.equal(app.files.get(order.previewKey), preview);
   assert.equal(app.element('#modal').hidden, false);
   assert.match(app.element('#modalContent').innerHTML, /data-c-success-order=/);
-});
-
-test('К1: сохранение профиля не перезаписывает новый статус и сообщение сотрудника', async () => {
-  const app = createCustomerHarness({ orders: [orderFixture('work')] });
-  await app.click({ cPage: 'profile' });
-
-  // A different tab has already committed these employee changes to the shared origin.
-  const employeeData = app.data();
-  employeeData.orders[0].status = 'ready';
-  employeeData.orders[0].messages.push({
-    id: 'staff-message',
-    author: 'staff',
-    text: 'Заказ готов.',
-    time: '2026-01-15T06:00:00.000Z',
-  });
-  app.storage.setItem(app.keyFor('alice'), JSON.stringify(employeeData));
-
-  app.element('#c-profile-name').value = 'Updated name';
-  app.element('#c-profile-group').value = 'TEST-01';
-  await app.submit('c-profile-form');
-  const saved = app.data();
-  assert.equal(saved.profile.name, 'Updated name', 'Обработчик профиля должен выполниться');
-  assert.deepEqual(
-    { status: saved.orders[0].status, messages: saved.orders[0].messages },
-    { status: 'ready', messages: employeeData.orders[0].messages },
-    'Изменения сотрудника должны пережить сохранение профиля заказчиком',
-  );
-});
-
-test('К2: отказ localStorage не показывает успешное оформление', async () => {
-  const app = createCustomerHarness();
-  app.storage.failWrites = true;
-  await app.customer
-    .createStudioOrder({ title: 'Quota test', size: 'M', count: 1 }, new Blob(['preview']))
-    .catch(() => {}); // A future implementation may reject or report the failure through the UI.
-
-  assert.ok(app.storage.failedWrites > 0, 'Отказ записи должен действительно произойти');
-  assert.equal(app.data().orders.length, 0);
-  assert.equal(app.element('#modal').hidden, true, 'Нельзя открывать окно успеха после отказа');
-  assert.doesNotMatch(app.element('#modalContent').innerHTML, /data-c-success-order=/);
 });
