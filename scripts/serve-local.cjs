@@ -18,7 +18,7 @@ const types = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.pdf': 'application/pdf',
-  '.woff2': 'font/woff2'
+  '.woff2': 'font/woff2',
 };
 const server = http.createServer(async (req, res) => {
   if (!['GET', 'HEAD'].includes(req.method)) {
@@ -48,18 +48,23 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, {
       'Content-Type': types[path.extname(file).toLowerCase()] || 'application/octet-stream',
       'Content-Length': info.size,
-      'Cache-Control': 'no-cache'
+      'Cache-Control': 'no-cache',
     });
     if (req.method === 'HEAD') res.end();
-    else fs.createReadStream(file).on('error', () => res.destroy()).pipe(res);
+    else
+      fs.createReadStream(file)
+        .on('error', () => res.destroy())
+        .pipe(res);
   } catch {
     res.writeHead(404).end('Not found');
   }
 });
-server.on('error', err => {
-  console.error(err.code === 'EADDRINUSE'
-    ? `Port ${port} is already in use. Stop the other server or choose another PORT.`
-    : err.message);
+server.on('error', (err) => {
+  console.error(
+    err.code === 'EADDRINUSE'
+      ? `Port ${port} is already in use. Stop the other server or choose another PORT.`
+      : err.message,
+  );
   process.exitCode = 1;
 });
 server.listen(port, '127.0.0.1', () => {

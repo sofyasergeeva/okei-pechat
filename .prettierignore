@@ -7,6 +7,10 @@ dist/favicon.svg
 # Stock Prettier would normalize its numeric literals and attribute-selector quotes.
 dist/editorial.css
 
+# Stock Prettier removes an explicit EmptyStatement after a function declaration.
+# Keep this source unchanged during the formatting-only stage.
+dist/order-math.js
+
 # Documentation, export metadata, hosting and editor settings
 docs/
 .openai/
