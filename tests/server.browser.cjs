@@ -79,6 +79,8 @@ test('Server: independent customer/staff contexts exchange PDF orders, statuses 
     await operator.locator('[data-w-tab=info]').click();
     await operator.locator('[data-w-checked]').check();
     await operator.locator('[data-w-next=work]').click();
+    await operator.locator('[data-w-start-printing]').click();
+    await expect(operator.locator('.w-inspector')).toContainText('Печать начата');
     await operator.locator('[data-w-next=ready]').click();
     await operator.locator('[data-w-next=issued]').click();
     await operator.locator('#w-issue-form input[name=paid]').check();
@@ -159,4 +161,121 @@ test('Server: failed order request preserves draft; local merch remains separate
     await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
   ).toBeTruthy();
   expect(errors).toEqual([]);
+});
+
+test('Server: multiple PDFs can be replaced, removed, downloaded and cancelled only before printing', async ({
+  browser,
+}, info) => {
+  const customer = await browser.newContext(),
+    staff = await browser.newContext(),
+    page = await customer.newPage(),
+    operator = await staff.newPage();
+  const errors = [];
+  for (const context of [customer, staff])
+    context.on('page', (p) => p.on('pageerror', (error) => errors.push(error.message)));
+  for (const p of [page, operator]) p.on('pageerror', (error) => errors.push(error.message));
+  const bytes = await require('node:fs/promises').readFile(
+    join(__dirname, '../dist/assets/sample.pdf'),
+  );
+  const pdf = (name) => ({ name, mimeType: 'application/pdf', buffer: bytes });
+  try {
+    await register(page, 'browser_multi');
+    await page.locator('.c-nav [data-c-page=print]').click();
+    await page.locator('#c-file-input').setInputFiles([
+      pdf('first.pdf'),
+      {
+        name: 'broken.pdf',
+        mimeType: 'application/pdf',
+        buffer: Buffer.from('%PDF-1.7\ninvalid'),
+      },
+    ]);
+    await expect(page.locator('.c-error')).toContainText('Не удалось прочитать PDF');
+    await expect(page.locator('[data-c-next]')).toBeDisabled();
+    await page.locator('#c-file-input').setInputFiles([pdf('first.pdf'), pdf('second.pdf')]);
+    await expect(page.locator('[data-c-replace-file]')).toHaveCount(2);
+    await expect(page.locator('.c-cost-card .c-total dd')).toHaveText('24 ₽');
+    await page.locator('[data-c-choice=duplex][data-c-value=true]').click();
+    await page.locator('#c-copies').fill('2');
+    await page.locator('#c-copies').press('Tab');
+    await expect(page.locator('.c-cost-card .c-total dd')).toHaveText('40 ₽');
+    await page.locator('[data-c-replace-file]').first().click();
+    await page.locator('#c-file-input').setInputFiles(pdf('replacement.pdf'));
+    await expect(page.locator('.c-form-card')).toContainText('replacement.pdf');
+    await page.locator('[data-c-remove-file]').last().click();
+    await expect(page.locator('.c-cost-card .c-total dd')).toHaveText('20 ₽');
+    await page.locator('[data-c-add-files]').click();
+    await page.locator('#c-file-input').setInputFiles(pdf('second.pdf'));
+    await expect(page.locator('[data-c-replace-file]')).toHaveCount(2);
+    await expect(page.locator('.c-cost-card .c-total dd')).toHaveText('40 ₽');
+    for (const theme of ['sky', 'glass']) {
+      await page.locator(`[data-theme-choice=${theme}]`).click();
+      await page.screenshot({
+        path: info.outputPath('multiple-pdf-' + theme + '.png'),
+        animations: 'disabled',
+      });
+    }
+    await page.locator('[data-c-next]').click();
+    await page.locator('[data-c-next]').click();
+    await page.locator('[data-c-success-order]').click();
+    await expect(page.locator('[data-c-file-id]')).toHaveCount(2);
+    await page.locator('[data-c-close]').click();
+    await login(operator, 'browser_operator');
+    await operator.locator('#w-search').fill('replacement.pdf');
+    await operator.locator('.w-order').click();
+    await expect(operator.locator('[data-w-file-id]')).toHaveCount(2);
+    for (let i = 0; i < 2; i++) {
+      const popupPromise = operator.waitForEvent('popup');
+      await operator.locator('[data-w-file-id]').nth(i).click();
+      const popup = await popupPromise;
+      await popup.waitForURL(/^blob:/);
+      await popup.close();
+      const downloading = operator.waitForEvent('download');
+      await operator.locator('.w-file-actions a[download]').nth(i).click();
+      const downloaded = await downloading;
+      expect(await require('node:fs/promises').readFile(await downloaded.path())).toEqual(bytes);
+    }
+    await operator.locator('[data-w-checked]').check();
+    await operator.locator('[data-w-next=work]').click();
+    await expect(operator.locator('[data-w-start-printing]')).toBeVisible();
+    await page.reload();
+    await page.locator('.c-live [data-c-order]').first().click();
+    await page.locator('[data-c-cancel]').click();
+    await page.locator('[data-c-confirm-cancel]').click();
+    await expect(page.locator('#modal')).toBeHidden();
+    await page.locator('.c-nav [data-c-page=orders]').click();
+    await page.locator('[data-c-filter=cancelled]').click();
+    await page.locator('.c-order-row').click();
+    await expect(page.locator('.c-drawer')).toContainText('Отменён:');
+    await page.locator('[data-c-repeat]').click();
+    await page.locator('[data-c-next]').click();
+    await page.locator('[data-c-next]').click();
+    await page.locator('#modal .close').click();
+    await operator.locator('[data-w-refresh]').click();
+    await operator.locator('[data-w-checked]').check();
+    await operator.locator('[data-w-next=work]').click();
+    await page.reload();
+    await page.locator('.c-live [data-c-order]').first().click();
+    await page.locator('[data-c-cancel]').click();
+    await operator.locator('[data-w-start-printing]').click();
+    await expect(operator.locator('.w-inspector')).toContainText('Печать начата:');
+    await page.locator('[data-c-confirm-cancel]').click();
+    await expect(page.locator('#modal')).toBeHidden();
+    await page.reload();
+    await page.locator('.c-live [data-c-order]').first().click();
+    await expect(page.locator('.c-drawer')).toContainText('Печать начата:');
+    await expect(page.locator('[data-c-cancel]')).toHaveCount(0);
+    await operator.setViewportSize({ width: 390, height: 844 });
+    await expect(operator.locator('.w-inspector')).toHaveAttribute('role', 'dialog');
+    expect(
+      await operator.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBeTruthy();
+    await operator.screenshot({
+      path: info.outputPath('multiple-pdf-staff-mobile.png'),
+      animations: 'disabled',
+    });
+    expect(errors).toEqual([]);
+  } finally {
+    await customer.close();
+    await staff.close();
+  }
 });

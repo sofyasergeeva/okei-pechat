@@ -250,6 +250,21 @@ test('Конструктор: обе стороны, превью и оформ�
   await capture(page, info, 'studio-review-glass-1440x1000');
   await page.locator('#s-confirm-order').click();
   await expect(page.locator('[data-c-success-order]')).toBeVisible();
+  const id = await page.locator('[data-c-success-order]').getAttribute('data-c-success-order');
+  await page.locator('#modal .close').click();
+  await logout(page);
+  await login(page, 'staff_01');
+  await page
+    .locator('[data-w-order]')
+    .filter({ hasText: '№' + id })
+    .click();
+  const saving = page.waitForEvent('download');
+  await page.locator('[data-w-design]').click();
+  const file = await saving;
+  expect(file.suggestedFilename()).toBe('okei-' + id + '-design.json');
+  const design = JSON.parse(await require('node:fs/promises').readFile(await file.path(), 'utf8'));
+  expect(design.front.some((layer) => layer.text === 'QA FRONT')).toBeTruthy();
+  expect(design.back.some((layer) => layer.text === 'QA BACK')).toBeTruthy();
 });
 
 test('Мобильная ширина: главная, печать и диалог сотрудника', async ({ page }, info) => {

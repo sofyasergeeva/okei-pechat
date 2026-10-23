@@ -73,33 +73,51 @@ async function createApi({
   });
   const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 25 * 1024 * 1024, files: 1, fields: 0, parts: 1 },
-  }).single('file');
-  app.post('/api/files', required, student, upload, async (req, res) => {
-    const pages = await orders.validatePDF(req.file),
-      id = randomUUID(),
-      storageName = id + '.pdf',
-      target = path.join(directory, 'pdf', storageName);
-    const name =
-      path
-        .basename(Buffer.from(req.file.originalname, 'latin1').toString('utf8'))
-        .replace(/[\x00-\x1f\x7f]/g, '')
-        .slice(0, 200) || 'document.pdf';
-    await fs.promises.writeFile(target, req.file.buffer, { flag: 'wx', mode: 0o600 });
-    try {
-      db.prepare('INSERT INTO files VALUES (?,?,?,?,?,?)').run(
-        id,
-        req.user.id,
-        storageName,
-        name,
-        pages,
-        req.file.size,
+    limits: { fileSize: 25 * 1024 * 1024, files: 10, fields: 0, parts: 10 },
+    fileFilter(req, file, done) {
+      done(
+        ['file', 'files'].includes(file.fieldname)
+          ? null
+          : auth.fail(400, 'Недопустимое поле загрузки.'),
+        true,
       );
+    },
+  }).any();
+  app.post('/api/files', required, student, upload, async (req, res) => {
+    const files = req.files || [];
+    if (!files.length || files.reduce((sum, file) => sum + file.size, 0) > 50 * 1024 * 1024)
+      throw auth.fail(400, 'Выбери от 1 до 10 PDF, суммарно до 50 МБ.');
+    const pages = await Promise.all(files.map(orders.validatePDF));
+    const saved = files.map((file, index) => ({
+      id: randomUUID(),
+      name:
+        path
+          .basename(Buffer.from(file.originalname, 'latin1').toString('utf8'))
+          .replace(/[\x00-\x1f\x7f]/g, '')
+          .slice(0, 200) || 'document.pdf',
+      pages: pages[index],
+      size: file.size,
+    }));
+    const written = [];
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const target = path.join(directory, 'pdf', saved[i].id + '.pdf');
+        await fs.promises.writeFile(target, files[i].buffer, { flag: 'wx', mode: 0o600 });
+        written.push(target);
+      }
+      db.transaction(() => {
+        const insert = db.prepare('INSERT INTO files VALUES (?,?,?,?,?,?)');
+        saved.forEach((file) =>
+          insert.run(file.id, req.user.id, file.id + '.pdf', file.name, file.pages, file.size),
+        );
+      })();
     } catch (error) {
-      await fs.promises.unlink(target).catch(() => {});
+      await Promise.all(written.map((target) => fs.promises.unlink(target).catch(() => {})));
       throw error;
     }
-    res.status(201).json({ id, name, pages, size: req.file.size });
+    res
+      .status(201)
+      .json(files.length === 1 && files[0].fieldname === 'file' ? saved[0] : { files: saved });
   });
   function sendFile(req, res, file) {
     if (!file) throw auth.fail(404, 'PDF не найден.');
@@ -115,7 +133,7 @@ async function createApi({
       !file ||
       (req.user.role !== 'staff' && file.owner_id !== req.user.id) ||
       (req.user.role === 'staff' &&
-        !db.prepare('SELECT 1 FROM orders WHERE file_id=?').get(file.id))
+        !db.prepare('SELECT 1 FROM order_files WHERE file_id=?').get(file.id))
     )
       throw auth.fail(404, 'PDF не найден.');
     sendFile(req, res, file);
@@ -137,6 +155,18 @@ async function createApi({
     const order = orders.accessibleOrder(db, req.user, req.params.id);
     sendFile(req, res, db.prepare('SELECT * FROM files WHERE id=?').get(order.file_id));
   });
+  app.get('/api/orders/:id/files/:fileId', required, (req, res) => {
+    orders.accessibleOrder(db, req.user, req.params.id);
+    const file = db
+      .prepare(
+        'SELECT f.* FROM order_files a JOIN files f ON f.id=a.file_id WHERE order_id=? AND file_id=?',
+      )
+      .get(req.params.id, req.params.fileId);
+    sendFile(req, res, file);
+  });
+  app.post('/api/orders/:id/printing', required, (req, res) =>
+    res.json(orders.modifyOrder(db, req.user, req.params.id, req.body, 'printing')),
+  );
   app.patch('/api/orders/:id/status', required, (req, res) =>
     res.json(orders.modifyOrder(db, req.user, req.params.id, req.body, 'status')),
   );

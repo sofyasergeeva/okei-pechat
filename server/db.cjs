@@ -23,8 +23,27 @@ function openDatabase(dataDir) {
     CREATE INDEX IF NOT EXISTS event_order ON events(order_id,id);
     CREATE INDEX IF NOT EXISTS message_order ON messages(order_id,time);
     CREATE INDEX IF NOT EXISTS session_expiry ON sessions(expires);
-    PRAGMA user_version = 1;
+
   `);
+  db.transaction(() => {
+    const columns = db.pragma('table_info(orders)').map((column) => column.name);
+    if (!columns.includes('printing_started_at'))
+      db.exec('ALTER TABLE orders ADD COLUMN printing_started_at TEXT');
+    if (!columns.includes('cancelled_at'))
+      db.exec('ALTER TABLE orders ADD COLUMN cancelled_at TEXT');
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS order_files (
+        order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+        file_id TEXT NOT NULL REFERENCES files(id), position INTEGER NOT NULL,
+        params TEXT NOT NULL CHECK(json_valid(params)), quote TEXT NOT NULL CHECK(json_valid(quote)),
+        PRIMARY KEY(order_id,file_id), UNIQUE(order_id,position)
+      );
+      CREATE INDEX IF NOT EXISTS attachment_file ON order_files(file_id);
+      INSERT OR IGNORE INTO order_files SELECT id,file_id,0,params,quote FROM orders;
+      UPDATE orders SET cancelled_at=(SELECT time FROM events WHERE order_id=orders.id AND status='cancelled' ORDER BY id DESC LIMIT 1) WHERE status='cancelled' AND cancelled_at IS NULL;
+      PRAGMA user_version = 2;
+    `);
+  })();
   return db;
 }
 module.exports = { openDatabase };

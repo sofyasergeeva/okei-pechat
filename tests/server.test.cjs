@@ -57,7 +57,9 @@ async function fixture(t) {
       });
       if (response.headers.get('set-cookie'))
         cookie = response.headers.get('set-cookie').split(';')[0];
-      assert.equal(response.status, status, await response.clone().text());
+      if (Array.isArray(status))
+        assert.ok(status.includes(response.status), await response.clone().text());
+      else assert.equal(response.status, status, await response.clone().text());
       return response;
     };
   }
@@ -211,13 +213,21 @@ test('HTTP: two independent sessions exchange statuses/messages; conflicts rejec
     })
   ).json();
   assert.equal(o.status, 'review');
-  for (const status of ['work', 'ready'])
+  for (const status of ['work', 'ready']) {
+    if (status === 'ready')
+      o = await (
+        await staff('/api/orders/' + o.id + '/printing', {
+          method: 'POST',
+          body: { version: o.version },
+        })
+      ).json();
     o = await (
       await staff('/api/orders/' + o.id + '/status', {
         method: 'PATCH',
         body: { version: o.version, status, checked: true },
       })
     ).json();
+  }
   await staff('/api/orders/' + o.id + '/status', {
     method: 'PATCH',
     status: 400,
@@ -438,4 +448,244 @@ test('Process restart: a fresh Node process restores the account, session, order
       .toString(),
     '%PDF-',
   );
+});
+
+async function operator(f) {
+  await createUser(
+    f.api.db,
+    { login: 'operator_test', password: 'test-password-2026', name: 'Operator', group: 'Print' },
+    'staff',
+  );
+  const staff = f.client();
+  await staff('/api/auth/login', {
+    method: 'POST',
+    body: { login: 'operator_test', password: 'test-password-2026' },
+  });
+  return staff;
+}
+async function newOrder(c, fileKeys, options = {}) {
+  return (
+    await c('/api/orders', {
+      method: 'POST',
+      status: 201,
+      body: { fileKeys, params: { ...params, ...options } },
+    })
+  ).json();
+}
+test('Cancellation: allowed in work before printing, idempotent, private and atomic against start', async (t) => {
+  const f = await fixture(t),
+    { c } = await f.register('cancel_before_print'),
+    other = await f.register('foreign_cancel'),
+    staff = await operator(f),
+    file = await (await f.upload(c)).json();
+  let o = await newOrder(c, [file.id]);
+  o = await (
+    await staff('/api/orders/' + o.id + '/status', {
+      method: 'PATCH',
+      body: { version: o.version, status: 'work', checked: true },
+    })
+  ).json();
+  assert.equal(o.canCancel, true);
+  await c('/api/orders/' + o.id + '/printing', {
+    method: 'POST',
+    body: { version: o.version },
+    status: 403,
+  });
+  await staff('/api/orders/' + o.id + '/status', {
+    method: 'PATCH',
+    body: { version: o.version, status: 'ready' },
+    status: 409,
+  });
+  await other.c('/api/orders/' + o.id + '/status', {
+    method: 'PATCH',
+    body: { version: o.version, status: 'cancelled' },
+    status: 404,
+  });
+  const cancelled = await (
+    await c('/api/orders/' + o.id + '/status', {
+      method: 'PATCH',
+      body: { version: o.version, status: 'cancelled' },
+    })
+  ).json();
+  assert.ok(cancelled.cancelledAt);
+  assert.equal(cancelled.printingStartedAt, null);
+  assert.equal(cancelled.status, 'cancelled');
+  assert.deepEqual(
+    await (
+      await c('/api/orders/' + o.id + '/status', {
+        method: 'PATCH',
+        body: { version: o.version, status: 'cancelled' },
+      })
+    ).json(),
+    cancelled,
+  );
+  assert.equal((await staff('/api/orders/' + o.id + '/files/' + file.id)).status, 200);
+  for (const startFirst of [true, false]) {
+    o = await newOrder(c, [file.id]);
+    o = await (
+      await staff('/api/orders/' + o.id + '/status', {
+        method: 'PATCH',
+        body: { version: o.version, status: 'work', checked: true },
+      })
+    ).json();
+    const start = () =>
+      staff('/api/orders/' + o.id + '/printing', {
+        method: 'POST',
+        body: { version: o.version },
+        status: [200, 409],
+      });
+    const cancel = () =>
+      c('/api/orders/' + o.id + '/status', {
+        method: 'PATCH',
+        body: { version: o.version, status: 'cancelled' },
+        status: [200, 409],
+      });
+    const outcomes = await Promise.all(startFirst ? [start(), cancel()] : [cancel(), start()]);
+    assert.deepEqual(outcomes.map((response) => response.status).sort(), [200, 409]);
+    const saved = await (await c('/api/orders/' + o.id)).json();
+    assert.notEqual(Boolean(saved.printingStartedAt), saved.status === 'cancelled');
+    if (saved.printingStartedAt) {
+      assert.equal(saved.canCancel, false);
+      await c('/api/orders/' + o.id + '/status', {
+        method: 'PATCH',
+        body: { version: saved.version, status: 'cancelled' },
+        status: 409,
+      });
+    }
+  }
+  await f.restart();
+  assert.deepEqual(await (await c('/api/orders/' + cancelled.id)).json(), cancelled);
+});
+test('Multiple PDFs: independent odd duplex/binding totals, every attachment protected, messages persist', async (t) => {
+  const f = await fixture(t),
+    { c } = await f.register('multi_pdf'),
+    other = await f.register('multi_foreign'),
+    staff = await operator(f);
+  const { PDFDocument } = require('pdf-lib'),
+    pdf = await PDFDocument.create();
+  pdf.addPage();
+  const one = Buffer.from(await pdf.save()),
+    three = await fs.readFile(path.join(__dirname, '../dist/assets/sample.pdf'));
+  const form = new FormData();
+  form.append('files', new Blob([three]), 'Первый.pdf');
+  form.append('files', new Blob([one]), 'Второй.pdf');
+  const uploaded = await (
+    await c('/api/files', { method: 'POST', body: form, status: 201 })
+  ).json();
+  assert.equal(uploaded.files[0].name, 'Первый.pdf');
+  assert.deepEqual(
+    uploaded.files.map((f) => f.pages),
+    [3, 1],
+  );
+  let o = await newOrder(
+    c,
+    uploaded.files.map((f) => f.id),
+    { duplex: true, copies: 2, binding: 'spiral' },
+  );
+  assert.equal(o.total, 428);
+  const { calculateDocumentsQuote } = await import('../dist/customer/orders.mjs');
+  const { loadOrderMath } = require('./customer-harness.cjs');
+  assert.deepEqual(
+    calculateDocumentsQuote(
+      { ...params, duplex: true, copies: 2, binding: 'spiral', files: uploaded.files },
+      loadOrderMath(),
+    ).q,
+    o.quote,
+  );
+  assert.equal(o.quote.print, 28);
+  assert.equal(o.quote.sheets, 6);
+  assert.equal(o.quote.binding, 400);
+  assert.deepEqual(
+    o.files.map((f) => f.quote.total),
+    [220, 208],
+  );
+  for (let i = 0; i < o.files.length; i++) {
+    const file = o.files[i],
+      r = await staff('/api/orders/' + o.id + '/files/' + file.id);
+    assert.match(r.headers.get('content-disposition'), /^attachment/);
+    assert.deepEqual(Buffer.from(await r.arrayBuffer()), i === 0 ? three : one);
+    await other.c('/api/orders/' + o.id + '/files/' + file.id, { status: 404 });
+    await staff('/api/files/' + file.id);
+  }
+  o = await (
+    await staff('/api/orders/' + o.id + '/messages', {
+      method: 'POST',
+      body: { version: o.version, text: 'Both files received', pause: true },
+    })
+  ).json();
+  o = await (
+    await c('/api/orders/' + o.id + '/messages', {
+      method: 'POST',
+      body: { version: o.version, text: 'Print both' },
+    })
+  ).json();
+  await f.restart();
+  assert.deepEqual(await (await staff('/api/orders/' + o.id)).json(), o);
+  await c('/api/orders', {
+    method: 'POST',
+    status: 400,
+    body: { fileKeys: [o.files[0].id, 'missing'], params },
+  });
+  await c('/api/orders', {
+    method: 'POST',
+    status: 400,
+    body: { fileKeys: o.files.map((f) => f.id), params: { ...params, useRange: true, range: '2' } },
+  });
+  assert.equal((await (await c('/api/orders')).json()).length, 1);
+});
+test('Batch failure: bad PDF, excess count, failed metadata and attachment writes leave no partial order', async (t) => {
+  const f = await fixture(t),
+    { c } = await f.register('batch_failure'),
+    bytes = await fs.readFile(path.join(__dirname, '../dist/assets/sample.pdf'));
+  const form = new FormData();
+  form.append('files', new Blob([bytes]), 'good.pdf');
+  form.append('files', new Blob(['%PDF-1.7\ninvalid']), 'bad.pdf');
+  await c('/api/files', { method: 'POST', body: form, status: 400 });
+  assert.equal(f.api.db.prepare('SELECT COUNT(*) n FROM files').get().n, 0);
+  assert.deepEqual(await fs.readdir(path.join(f.api.db.name, '../pdf')), []);
+  const excess = new FormData();
+  for (let i = 0; i < 11; i++) excess.append('files', new Blob([bytes]), i + '.pdf');
+  await c('/api/files', { method: 'POST', body: excess, status: 400 });
+  f.api.db.exec(
+    "CREATE TRIGGER fail_second_file BEFORE INSERT ON files WHEN NEW.name='fail.pdf' BEGIN SELECT RAISE(ABORT,'test'); END",
+  );
+  const batch = new FormData();
+  batch.append('files', new Blob([bytes]), 'good.pdf');
+  batch.append('files', new Blob([bytes]), 'fail.pdf');
+  await c('/api/files', { method: 'POST', body: batch, status: 500 });
+  assert.equal(f.api.db.prepare('SELECT COUNT(*) n FROM files').get().n, 0);
+  assert.deepEqual(await fs.readdir(path.join(f.api.db.name, '../pdf')), []);
+  f.api.db.exec('DROP TRIGGER fail_second_file');
+  const a = await (await f.upload(c)).json(),
+    b = await (await f.upload(c)).json();
+  f.api.db.exec(
+    "CREATE TRIGGER fail_attachment BEFORE INSERT ON order_files WHEN NEW.position=1 BEGIN SELECT RAISE(ABORT,'test'); END",
+  );
+  await c('/api/orders', { method: 'POST', status: 500, body: { fileKeys: [a.id, b.id], params } });
+  assert.equal(f.api.db.prepare('SELECT COUNT(*) n FROM orders').get().n, 0);
+  assert.equal(f.api.db.prepare('SELECT COUNT(*) n FROM order_files').get().n, 0);
+  assert.equal(f.api.db.prepare('SELECT COUNT(*) n FROM events').get().n, 0);
+});
+test('Migration v1: existing single-PDF order, exact price, messages and file survive repeatable upgrade', async (t) => {
+  const f = await fixture(t),
+    { c } = await f.register('legacy_single'),
+    file = await (await f.upload(c)).json();
+  let o = await newOrder(c, [file.id]);
+  o = await (
+    await c('/api/orders/' + o.id + '/messages', {
+      method: 'POST',
+      body: { version: o.version, text: 'Legacy message' },
+    })
+  ).json();
+  f.api.db.exec(
+    'DROP TABLE order_files; ALTER TABLE orders DROP COLUMN printing_started_at; ALTER TABLE orders DROP COLUMN cancelled_at; PRAGMA user_version=1;',
+  );
+  await f.restart();
+  const migrated = await (await c('/api/orders/' + o.id)).json();
+  assert.deepEqual(migrated, o);
+  assert.equal(f.api.db.pragma('user_version', { simple: true }), 2);
+  assert.equal(migrated.files.length, 1);
+  await c('/api/orders/' + o.id + '/file');
+  await f.restart();
+  assert.deepEqual(await (await c('/api/orders/' + o.id)).json(), o);
 });

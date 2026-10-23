@@ -5,16 +5,18 @@ import {
   activeOrders,
   filteredOrders as selectOrders,
   calculateQuote,
+  calculateDocumentsQuote,
 } from './orders.mjs';
 // Keep the original SVG markup; OkeiUI's arrow uses a different stroke width.
 function arrowIcon() {
   return `<svg class="ui-icon ui-arrow" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19 19 5M5 5h14v14"/></svg>`;
 }
-export function createCustomerViews(state, { orderMath, ui, studio, pdfArtwork }) {
+export function createCustomerViews(state, { orderMath, ui, studio, pdfArtwork, server = false }) {
   const M = orderMath;
   const active = () => activeOrders(state.orders);
   const filteredOrders = () => selectOrders(state.orders, state.filter, state.search);
-  const currentQuote = () => calculateQuote(state.draft, orderMath);
+  const currentQuote = () =>
+    (server ? calculateDocumentsQuote : calculateQuote)(state.draft, orderMath);
   function statusIcon(status) {
     return ui.icon(
       {
@@ -286,6 +288,41 @@ export function createCustomerViews(state, { orderMath, ui, studio, pdfArtwork }
       `</section>${costCard(q, result)}</div>`
     );
   }
+  function draftFiles() {
+    if (!server || !state.draft.files?.length) return '';
+    if (state.draft.files.length === 1 && state.draft.step !== 1)
+      return (
+        '<input type="file" id="c-file-input" accept="application/pdf,.pdf" multiple hidden><div class="c-demo-file"><button class="c-text-btn" data-c-add-files>Добавить PDF</button><button class="c-subtle-btn" data-c-remove-file="' +
+        esc(state.draft.files[0].id) +
+        '">Убрать PDF</button></div>'
+      );
+    return (
+      (state.draft.step !== 1
+        ? '<input type="file" id="c-file-input" accept="application/pdf,.pdf" multiple hidden>'
+        : '') +
+      '<div class="c-field-group">' +
+      state.draft.files
+        .map(
+          (file) =>
+            '<div class="c-file-inline"><span class="c-file-mark">PDF</span><span><b>' +
+            esc(file.name) +
+            '</b><small>' +
+            file.pages +
+            ' стр. · ' +
+            Math.ceil(file.size / 1024) +
+            ' КБ</small></span><button class="c-text-btn" data-c-replace-file="' +
+            esc(file.id) +
+            '">Заменить</button><button class="c-subtle-btn" data-c-remove-file="' +
+            esc(file.id) +
+            '">Убрать</button></div>',
+        )
+        .join('') +
+      (state.draft.files.length < 10
+        ? '<button class="btn secondary" data-c-add-files>Добавить PDF</button>'
+        : '') +
+      '<p class="c-hint">До 10 PDF, каждый до 25 МБ, вместе до 50 МБ. Общие настройки применяются к каждому документу; переплёт — отдельно.</p></div>'
+    );
+  }
   function quoteHTML(q) {
     return (
       `<div class="c-cost-file">${esc(state.draft.fileName)}<small>${q.pages} ${plural(q.pages, 'страница', 'страницы', 'страниц')} × ${q.copies} ${plural(q.copies, 'копия', 'копии', 'копий')}</small>` +
@@ -331,14 +368,14 @@ export function createCustomerViews(state, { orderMath, ui, studio, pdfArtwork }
       `<p>${state.draft.fileKey ? esc(state.draft.fileName) + ' · ' + state.draft.pages + ' стр.' : 'или выбери документ на устройстве'}</p>` +
       `<button class="btn ${state.draft.fileKey ? 'secondary' : 'primary'}" data-c-upload ${state.loading ? 'disabled' : ''}>${state.draft.fileKey ? 'Заменить файл' : 'Выбрать PDF'} ${arrowIcon()}` +
       `</button>` +
-      `<input type="file" id="c-file-input" accept="application/pdf,.pdf" hidden>` +
+      `<input type="file" id="c-file-input" accept="application/pdf,.pdf"${server ? ' multiple' : ''} hidden>` +
       `<small>До 25 МБ · PDF без пароля</small>` +
       `</div>` +
       `<div class="c-demo-file">` +
       `<span>Пока нет файла под рукой?</span>` +
       `<button class="c-text-btn" data-c-sample ${state.loading ? 'disabled' : ''}>Попробовать на 3 страницах ${arrowIcon()}` +
       `</button>` +
-      `</div>${state.draft.fileKey ? '<button class="c-subtle-btn" data-c-clear-draft>Убрать файл и очистить черновик</button>' : ''}`
+      `</div>${draftFiles()}${state.draft.fileKey ? '<button class="c-subtle-btn" data-c-clear-draft>Убрать файл и очистить черновик</button>' : ''}`
     );
   }
   function choice(name, value, title, desc, selected, disabled = false) {
@@ -356,11 +393,11 @@ export function createCustomerViews(state, { orderMath, ui, studio, pdfArtwork }
       `<span class="c-file-mark">PDF</span>` +
       `<span>` +
       `<b>${esc(state.draft.fileName)}</b>` +
-      `<small>${state.draft.pages} ${plural(state.draft.pages, 'страница', 'страницы', 'страниц')} в исходном файле</small>` +
+      `<small>${state.draft.pages} ${plural(state.draft.pages, 'страница', 'страницы', 'страниц')} ${server && state.draft.files?.length > 1 ? 'в документах' : 'в исходном файле'}</small>` +
       `</span>` +
       `<button class="c-text-btn" data-c-step="1">Заменить ${arrowIcon()}` +
       `</button>` +
-      `</div>${pageRange(error)}${paperOptions()}${colorOptions()}${sideOptions(q)}${copyAndBindingOptions(q)}<p class="c-hint">Двусторонняя печать — демотариф.</p>` +
+      `</div>${draftFiles()}${pageRange(error)}${paperOptions()}${colorOptions()}${sideOptions(q)}${copyAndBindingOptions(q)}<p class="c-hint">Двусторонняя печать — демотариф.</p>` +
       `<div class="c-mobile-cost">${q ? quoteHTML(q) : esc(error || '')}</div>`
     );
   }
@@ -373,7 +410,7 @@ export function createCustomerViews(state, { orderMath, ui, studio, pdfArtwork }
       `<p>${q ? q.pages : '—'} стр. · ${state.draft.format} · ${state.draft.color === 'mono' ? 'ч/б' : 'цвет'} · ${state.draft.duplex ? 'с двух сторон' : 'с одной стороны'} · ${state.draft.copies} коп.</p>` +
       `</div>` +
       `</div>` +
-      `<div class="c-review-grid">` +
+      `${server && state.draft.files?.length > 1 ? draftFiles() : ''}<div class="c-review-grid">` +
       `<div>` +
       `<span>Заказчик</span>` +
       `<strong>${esc(state.profile.name)}</strong>` +
@@ -419,7 +456,7 @@ export function createCustomerViews(state, { orderMath, ui, studio, pdfArtwork }
               .map(
                 (m) =>
                   `<div class="c-message ${m.author}">` +
-                  `<span>${m.author === 'staff' ? 'Сотрудник · пример' : 'Ты'}</span>` +
+                  `<span>${m.author === 'staff' ? (server ? 'Сотрудник' : 'Сотрудник · пример') : 'Ты'}</span>` +
                   `<p>${esc(m.text)}</p>` +
                   `<small>${fmt(m.time)}${m.author === 'user' ? ' · сохранено локально' : ''}</small>` +
                   `</div>`,
@@ -547,7 +584,7 @@ export function createCustomerViews(state, { orderMath, ui, studio, pdfArtwork }
       `</div>` +
       `<button id="c-close-order" aria-label="Закрыть заказ" data-c-close>×</button>` +
       `</header>` +
-      `<div class="c-drawer-status">${badge(o)}<p>${states[o.status][1]}</p>` +
+      `<div class="c-drawer-status">${badge(o)}<p>${server && o.status === 'cancelled' ? 'Заказ отменён до начала печати.' : states[o.status][1]}</p>` +
       `</div>` +
       `<div class="c-tabs c-drawer-tabs">` +
       `<button data-c-drawer-tab="info" class="${state.detailTab === 'info' ? 'active' : ''}">Детали заказа</button>` +
@@ -763,10 +800,21 @@ export function createCustomerViews(state, { orderMath, ui, studio, pdfArtwork }
     );
   }
   function sideOptions(q) {
+    const twoSheets =
+      server && state.draft.files?.length && q
+        ? state.draft.files.reduce(
+            (sum, file) =>
+              sum +
+              Math.ceil(
+                M.selection(file.pages, state.draft.useRange ? state.draft.range : '').length / 2,
+              ),
+            0,
+          )
+        : Math.ceil((q?.pages || state.draft.pages) / 2);
     return (
       `<div class="c-field-group">` +
       `<h2>Стороны печати</h2>` +
-      `<div class="c-segment c-sides">${choice('duplex', 'false', 'С одной стороны', (q?.pages || state.draft.pages) + ' стр. → ' + (q?.pages || state.draft.pages) + ' ' + plural(q?.pages || state.draft.pages, 'лист', 'листа', 'листов') + ' на копию', !state.draft.duplex)}${choice('duplex', 'true', 'С двух сторон', (q?.pages || state.draft.pages) + ' стр. → ' + Math.ceil((q?.pages || state.draft.pages) / 2) + ' ' + plural(Math.ceil((q?.pages || state.draft.pages) / 2), 'лист', 'листа', 'листов') + ' на копию', state.draft.duplex, state.draft.paper === 'photo')}</div>` +
+      `<div class="c-segment c-sides">${choice('duplex', 'false', 'С одной стороны', (q?.pages || state.draft.pages) + ' стр. → ' + (q?.pages || state.draft.pages) + ' ' + plural(q?.pages || state.draft.pages, 'лист', 'листа', 'листов') + ' на копию', !state.draft.duplex)}${choice('duplex', 'true', 'С двух сторон', (q?.pages || state.draft.pages) + ' стр. → ' + twoSheets + ' ' + plural(twoSheets, 'лист', 'листа', 'листов') + ' на копию', state.draft.duplex, state.draft.paper === 'photo')}</div>` +
       `<p class="c-hint">${state.draft.paper === 'photo' ? 'Фотобумага: цветная печать с одной стороны.' : state.draft.duplex ? 'Две страницы — один лист. Непарная страница — отдельно.' : 'Одна страница — один лист.'}</p>` +
       `</div>`
     );
@@ -813,7 +861,7 @@ export function createCustomerViews(state, { orderMath, ui, studio, pdfArtwork }
     return (
       `<div class="c-drawer-actions">` +
       `<button class="btn secondary" data-c-drawer-tab="chat">Написать сотруднику ${arrowIcon()}` +
-      `</button>${o.status === 'new' ? `<button class="c-danger-btn" data-c-cancel="${o.id}">Отменить заказ</button>` : ''}${
+      `</button>${(server ? o.canCancel : o.status === 'new') ? `<button class="c-danger-btn" data-c-cancel="${o.id}">Отменить заказ</button>` : ''}${
         ['issued', 'cancelled'].includes(o.status)
           ? `<button class="c-text-btn" data-c-repeat="${o.id}">Повторить заказ ${arrowIcon()}` +
             `</button>`
@@ -822,6 +870,27 @@ export function createCustomerViews(state, { orderMath, ui, studio, pdfArtwork }
     );
   }
   function orderAttachments(o) {
+    if (server && o.files?.length > 1)
+      return o.files
+        .map(
+          (file) =>
+            '<div class="c-file-inline"><span class="c-file-mark">PDF</span><span><b>' +
+            esc(file.name) +
+            '</b><small>' +
+            file.pages +
+            ' стр. · ' +
+            Math.ceil(file.size / 1024) +
+            ' КБ · ' +
+            money(file.quote.total) +
+            '</small></span><button class="c-text-btn" data-c-file-id="' +
+            esc(file.id) +
+            '">Открыть PDF</button><a class="c-text-btn" href="/api/orders/' +
+            o.id +
+            '/files/' +
+            esc(file.id) +
+            '" download>Скачать</a></div>',
+        )
+        .join('');
     return `${
       o.fileKey
         ? `<button class="btn secondary" data-c-open-file="${o.id}">Открыть PDF ${arrowIcon()}` +
@@ -855,7 +924,7 @@ export function createCustomerViews(state, { orderMath, ui, studio, pdfArtwork }
               p.useRange
                 ? `<div>` +
                   `<dt>Выбраны страницы</dt>` +
-                  `<dd>${esc((p.pageList || []).join(', '))}</dd>` +
+                  `<dd>${esc(server && o.files?.length > 1 ? p.range + ' (в каждом PDF)' : (p.pageList || []).join(', '))}</dd>` +
                   `</div>`
                 : ''
             }<div>` +
@@ -884,14 +953,20 @@ export function createCustomerViews(state, { orderMath, ui, studio, pdfArtwork }
       `<strong>${money(o.total)}</strong>` +
       `</dd>` +
       `</div>` +
-      `</dl>`
+      `</dl>` +
+      (server
+        ? (o.printingStartedAt
+            ? '<p class="c-hint">Печать начата: ' + fmt(o.printingStartedAt) + '</p>'
+            : '') +
+          (o.cancelledAt ? '<p class="c-hint">Отменён: ' + fmt(o.cancelledAt) + '</p>' : '')
+        : '')
     );
   }
   function cancelConfirmation(id) {
     return (
       `<span class="c-kicker">Заказ №${id}</span>` +
       `<h2>Отменить заказ?</h2>` +
-      `<p>Он ещё не принят в работу. После отмены его можно будет оформить заново.</p>` +
+      `<p>${server ? 'Печать ещё не началась. После отмены заказ можно будет оформить заново.' : 'Он ещё не принят в работу. После отмены его можно будет оформить заново.'}</p>` +
       `<button class="btn primary" data-c-confirm-cancel="${id}">Да, отменить заказ</button>` +
       `<button class="btn secondary" data-c-keep="${id}" style="width:100%;margin-top:10px">Оставить заказ</button>`
     );

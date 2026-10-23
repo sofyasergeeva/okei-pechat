@@ -6,7 +6,11 @@ import { openServerPDF } from './api.mjs';
 export function createServerStaff({ api, ui, notify }) {
   const state = createStaffState();
   const $ = (selector) => document.querySelector(selector);
-  const views = createStaffViews(state, { ui, pdfArtwork: () => $('#pdf').innerHTML });
+  const views = createStaffViews(state, {
+    ui,
+    server: true,
+    pdfArtwork: () => $('#pdf').innerHTML,
+  });
   let pending = false;
   const selected = () => state.all.find((o) => o.id === state.chosen);
   function pick() {
@@ -160,6 +164,12 @@ export function createServerStaff({ api, ui, notify }) {
       if (d.wTab) {
         state.detailTab = d.wTab;
         state.confirm = '';
+        return;
+      }
+      if (d.wFileId) return openServerPDF(api, '/orders/' + selected().id + '/files/' + d.wFileId);
+      if (button.hasAttribute('data-w-start-printing')) {
+        await update('/printing', {});
+        notify('Печать начата. Отмена недоступна.');
         return;
       }
       if (button.hasAttribute('data-w-file'))

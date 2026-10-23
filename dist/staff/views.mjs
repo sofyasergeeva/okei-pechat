@@ -7,7 +7,7 @@ import {
   visible as selectVisible,
   summarizeGroups,
 } from './orders.mjs';
-export function createStaffViews(state, { ui, pdfArtwork }) {
+export function createStaffViews(state, { ui, pdfArtwork, server = false }) {
   const I = (name) => ui.icon(name);
   const visible = () => selectVisible(state);
   const selected = () => state.all.find((o) => o._ref === state.chosen);
@@ -129,9 +129,17 @@ export function createStaffViews(state, { ui, pdfArtwork }) {
   }
   function params(o) {
     const p = o.params;
-    return `<dl class="w-params">${o.kind === 'document' ? param('Формат', p.format) + param('Цвет', p.color === 'color' ? 'Цветная' : 'Чёрно-белая') + param('Страницы', p.useRange ? p.range : (p.selectedPages || p.pages) + ' · все') + param('Стороны', p.duplex ? 'С двух сторон' : 'С одной стороны') + param('Копии', p.copies) + param('Листов', Math.ceil((p.selectedPages || p.pages) / (p.duplex ? 2 : 1)) * p.copies) + param('Бумага', p.paper === 'photo' ? 'Фотобумага' : 'Обычная') + param('Переплёт', p.binding === 'spiral' ? 'Пружина' : p.binding === 'diploma' ? 'Дипломный' : 'Без переплёта') : param('Размер', p.size) + param('Количество', p.copies) + param('Цвет', p.shirtColorName || p.color || 'Молочный') + param('Макет', p.design === 'studio' ? 'Из конструктора' : p.design === 'classic' ? 'Логотип ОКЭИ' : 'Своя надпись')}</dl>`;
+    return `<dl class="w-params">${o.kind === 'document' ? param('Формат', p.format) + param('Цвет', p.color === 'color' ? 'Цветная' : 'Чёрно-белая') + param('Страницы', p.useRange ? p.range : (p.selectedPages || p.pages) + ' · все') + param('Стороны', p.duplex ? 'С двух сторон' : 'С одной стороны') + param('Копии', p.copies) + param('Листов', server && o.quote ? o.quote.sheets : Math.ceil((p.selectedPages || p.pages) / (p.duplex ? 2 : 1)) * p.copies) + param('Бумага', p.paper === 'photo' ? 'Фотобумага' : 'Обычная') + param('Переплёт', p.binding === 'spiral' ? 'Пружина' : p.binding === 'diploma' ? 'Дипломный' : 'Без переплёта') : param('Размер', p.size) + param('Количество', p.copies) + param('Цвет', p.shirtColorName || p.color || 'Молочный') + param('Макет', p.design === 'studio' ? 'Из конструктора' : p.design === 'classic' ? 'Логотип ОКЭИ' : 'Своя надпись')}</dl>`;
   }
   function actions(o) {
+    if (server && o.status === 'work' && !o.printingStartedAt)
+      return (
+        '<div class="w-action-block"><button class="w-button w-primary" data-w-start-printing>Начать печать ' +
+        I('printer') +
+        '</button><button class="w-text" data-w-tab="chat">Уточнить ' +
+        I('message') +
+        '</button><details class="w-more"><summary>Ещё</summary><button class="w-text" data-w-cancel>Отменить заказ</button></details></div>'
+      );
     if (state.confirm === 'issue')
       return (
         `<form id="w-issue-form" class="w-confirm">` +
@@ -193,10 +201,9 @@ export function createStaffViews(state, { ui, pdfArtwork }) {
       ['new', 'work', 'review'].includes(o.status)
         ? `<div class="w-secondary-actions">` +
           `<button class="w-text" data-w-tab="chat">Уточнить ${I('message')}</button>` +
-          `<details class="w-more">` +
-          `<summary>Ещё</summary>` +
-          `<button class="w-text" data-w-cancel>Отменить заказ</button>` +
-          `</details>` +
+          (!server || o.canCancel
+            ? '<details class="w-more"><summary>Ещё</summary><button class="w-text" data-w-cancel>Отменить заказ</button></details>'
+            : '') +
           `</div>`
         : ''
     }</div>`;
@@ -235,7 +242,28 @@ export function createStaffViews(state, { ui, pdfArtwork }) {
     );
   }
   function fileActions(o) {
-    return `<div class="w-file-actions">${o.kind === 'document' ? `<button class="w-button w-outline" data-w-file ${o.fileKey || o.sampleFile ? '' : 'disabled'}>${I('file')} ${o.fileKey || o.sampleFile ? 'Открыть PDF' : 'Нет исходного файла'}</button>` : o.previewKey || o.designKey ? `${o.previewKey ? '<button class="w-button w-outline" data-w-preview>Превью PNG</button>' : ''}${o.designKey ? '<button class="w-text" data-w-design>Исходный макет JSON</button>' : ''}` : ''}</div>`;
+    if (server && o.files?.length > 1)
+      return o.files
+        .map(
+          (file) =>
+            '<div class="w-file-actions"><span><b>' +
+            E(file.name) +
+            '</b><small> · ' +
+            file.pages +
+            ' стр. · ' +
+            Math.ceil(file.size / 1024) +
+            ' КБ · ' +
+            rub(file.quote.total) +
+            '</small></span><button class="w-button w-outline" data-w-file-id="' +
+            E(file.id) +
+            '">Открыть PDF</button><a class="w-text" href="/api/orders/' +
+            o.id +
+            '/files/' +
+            E(file.id) +
+            '" download>Скачать</a></div>',
+        )
+        .join('');
+    return `<div class="w-file-actions">${server && o.files?.length === 1 ? '<a class="w-text" href="/api/orders/' + o.id + '/file" download>Скачать PDF</a>' : ''}${o.kind === 'document' ? `<button class="w-button w-outline" data-w-file ${o.fileKey || o.sampleFile ? '' : 'disabled'}>${I('file')} ${o.fileKey || o.sampleFile ? 'Открыть PDF' : 'Нет исходного файла'}</button>` : o.previewKey || o.designKey ? `${o.previewKey ? '<button class="w-button w-outline" data-w-preview>Превью PNG</button>' : ''}${o.designKey ? '<button class="w-text" data-w-design>Исходный макет JSON</button>' : ''}` : ''}</div>`;
   }
   function detail() {
     const o = selected();
@@ -265,7 +293,7 @@ export function createStaffViews(state, { ui, pdfArtwork }) {
                 ? `<div class="w-merch-preview">` +
                   `<img src="/assets/college-shirt.png" alt="Пример модели футболки">${o.params.design === 'classic' ? '<img class="w-merch-logo" src="/assets/college-red.svg" alt="Логотип ОКЭИ">' : '<span>Макет заказчика</span>'}</div>`
                 : ''
-            }${params(o)}${
+            }${server && o.printingStartedAt ? '<p class="w-tariff">Печать начата: ' + stamp(o.printingStartedAt) + '</p>' : ''}${server && o.cancelledAt ? '<p class="w-tariff">Отменён: ' + stamp(o.cancelledAt) + '</p>' : ''}${params(o)}${
               o.comment || o.params.comment
                 ? `<div class="w-comment">` +
                   `<small>Комментарий</small>` +

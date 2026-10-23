@@ -254,3 +254,27 @@ export function placeCollectionOrder(state, repository, d) {
 
   return o;
 }
+
+// Each PDF starts on its own sheet; binding is charged per document and copy.
+export function calculateDocumentsQuote(draft, math) {
+  if (!draft.files?.length) return calculateQuote(draft, math);
+  const results = draft.files.map((file) => calculateQuote({ ...draft, pages: file.pages }, math));
+  const invalid = results.find((result) => result.error);
+  if (invalid) return { error: invalid.error };
+  const q = { ...results[0].q };
+  for (const name of [
+    'pages',
+    'sheets',
+    'sheetsPerCopy',
+    'impressions',
+    'singles',
+    'pairs',
+    'print',
+    'binding',
+    'bindingPerCopy',
+    'total',
+    'savings',
+  ])
+    q[name] = results.reduce((sum, result) => sum + result.q[name], 0);
+  return { q };
+}

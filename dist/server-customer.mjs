@@ -1,5 +1,5 @@
 ﻿import { blank, createCustomerState } from './customer/state.mjs';
-import { calculateQuote, filteredOrders } from './customer/orders.mjs';
+import { calculateDocumentsQuote, filteredOrders } from './customer/orders.mjs';
 import { createCustomerViews } from './customer/views.mjs';
 import { openServerPDF } from './api.mjs';
 import { plural } from './shared.mjs';
@@ -10,16 +10,33 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
   const $ = (selector, root = document) => root.querySelector(selector);
   const views = createCustomerViews(state, {
     orderMath: globalThis.OrderMath,
+    server: true,
     ui,
     studio,
     pdfArtwork: () => $('#pdf').innerHTML,
   });
   const messageDrafts = new Map();
+  let uploadMode = 'all';
+  function syncFiles(files) {
+    state.draft.files = files;
+    state.draft.fileKey = files[0]?.id || '';
+    state.draft.fileName =
+      files.length > 1 ? files[0].name + ' и ещё ' + (files.length - 1) : files[0]?.name || '';
+    state.draft.pages = files.reduce((sum, file) => sum + file.pages, 0);
+    state.draft.fileSize = files.reduce((sum, file) => sum + file.size, 0);
+    if (!files.length) state.draft.step = 1;
+  }
+  function chooseFiles(mode) {
+    uploadMode = mode;
+    const input = $('#c-file-input');
+    input.multiple = mode === 'all' || mode === 'append';
+    input.click();
+  }
   let localMerch = false,
     pending = false;
   const current = () => state.user?.id;
   const localUser = () => ({ ...state.user, id: 'server-merch:' + current() });
-  const quote = () => calculateQuote(state.draft, globalThis.OrderMath);
+  const quote = () => calculateDocumentsQuote(state.draft, globalThis.OrderMath);
   function saveDraft() {
     try {
       localStorage.setItem('okei-api-draft-v1:' + current(), JSON.stringify(state.draft));
@@ -37,6 +54,15 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
       const saved = JSON.parse(localStorage.getItem('okei-api-draft-v1:' + user.id));
       if (saved) state.draft = { ...blank(), ...saved };
     } catch {}
+    if (state.draft.fileKey && !state.draft.files)
+      state.draft.files = [
+        {
+          id: state.draft.fileKey,
+          name: state.draft.fileName,
+          pages: state.draft.pages,
+          size: state.draft.fileSize,
+        },
+      ];
     state.page = 'overview';
   }
   function serverText(html) {
@@ -82,7 +108,9 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
   function draw() {
     if (!current() || document.body.dataset.screen !== 'account' || localMerch) return;
     $('#main').innerHTML = render();
-    $('#c-file-input')?.addEventListener('change', (e) => run(() => upload(e.target.files[0])));
+    $('#c-file-input')?.addEventListener('change', (e) =>
+      run(() => upload([...e.target.files], uploadMode)),
+    );
     const drop = $('#c-drop');
     drop?.addEventListener('dragover', (e) => {
       e.preventDefault();
@@ -91,7 +119,7 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
     drop?.addEventListener('dragleave', () => drop.classList.remove('drag'));
     drop?.addEventListener('drop', (e) => {
       e.preventDefault();
-      run(() => upload(e.dataTransfer.files[0]));
+      run(() => upload([...e.dataTransfer.files]));
     });
     if (state.detail) drawer();
   }
@@ -109,7 +137,10 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
     } catch (error) {
       if (current() === owner) {
         state.uploadError = error.message;
-        if (error.status === 409) await refresh().catch(() => {});
+        if (error.status === 409) {
+          await refresh().catch(() => {});
+          if ($('[data-c-confirm-cancel]')) closeModal();
+        }
         notify(error.message);
         draw();
       }
@@ -121,27 +152,36 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
       }
     }
   }
-  async function upload(file) {
-    if (!file) return;
-    if (file.size > 25 * 1024 * 1024) throw Error('Выбери PDF до 25 МБ.');
+  async function upload(files, mode = 'all') {
+    if (!files.length) return;
+    const existing = state.draft.files || [];
+    const retained =
+      mode === 'all'
+        ? []
+        : mode === 'append'
+          ? existing
+          : existing.filter((file) => file.id !== mode);
+    if (retained.length + files.length > 10) throw Error('Можно добавить до 10 PDF.');
+    if (files.some((file) => file.size > 25 * 1024 * 1024)) throw Error('Каждый PDF — до 25 МБ.');
+    if ([...retained, ...files].reduce((sum, file) => sum + file.size, 0) > 50 * 1024 * 1024)
+      throw Error('Общий размер PDF — до 50 МБ.');
     state.loading = true;
     state.uploadError = '';
     draw();
     const body = new FormData();
-    body.set('file', file);
+    files.forEach((file) => body.append('files', file));
     const saved = await api.request('/files', { method: 'POST', body });
-    state.draft = {
-      ...state.draft,
-      fileKey: saved.id,
-      fileName: saved.name,
-      pages: saved.pages,
-      fileSize: saved.size,
-      range: '',
-      useRange: false,
-      step: 2,
-    };
+    const attachments =
+      mode === 'all'
+        ? saved.files
+        : mode === 'append'
+          ? [...existing, ...saved.files]
+          : existing.flatMap((file) => (file.id === mode ? saved.files : [file]));
+    syncFiles(attachments);
+    Object.assign(state.draft, { range: '', useRange: false, step: 2 });
     saveDraft();
-    notify('PDF проверен · ' + saved.pages + ' стр.');
+    uploadMode = 'all';
+    notify('PDF проверены · ' + state.draft.pages + ' стр.');
   }
   async function sample() {
     const owner = current();
@@ -149,7 +189,7 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
     if (!response.ok) throw Error('Пример не загрузился.');
     const blob = await response.blob();
     if (owner !== current()) throw Error('Сессия изменилась.');
-    await upload(new File([blob], 'Пример печати.pdf', { type: 'application/pdf' }));
+    await upload([new File([blob], 'Пример печати.pdf', { type: 'application/pdf' })]);
   }
   function modal(html) {
     $('#modalContent').innerHTML = html;
@@ -198,7 +238,10 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
     draw();
     const order = await api.request('/orders', {
       method: 'POST',
-      body: { fileKey: state.draft.fileKey, params: { ...state.draft } },
+      body: {
+        fileKeys: (state.draft.files || [{ id: state.draft.fileKey }]).map((file) => file.id),
+        params: { ...state.draft },
+      },
     });
     state.orders.unshift(order);
     state.draft = blank();
@@ -222,6 +265,12 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
       await refresh();
       return;
     }
+    if (d.cRemoveFile) {
+      syncFiles(state.draft.files.filter((file) => file.id !== d.cRemoveFile));
+      saveDraft();
+      return;
+    }
+    if (d.cFileId) return openServerPDF(api, '/orders/' + state.detail + '/files/' + d.cFileId);
     if (d.cOrder) return open(d.cOrder, d.cTab);
     if (d.cFilter) {
       state.filter = d.cFilter;
@@ -252,7 +301,7 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
       return;
     }
     if (button.hasAttribute('data-c-upload')) {
-      $('#c-file-input').click();
+      chooseFiles('all');
       return;
     }
     if (button.hasAttribute('data-c-sample')) return sample();
@@ -302,7 +351,8 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
     }
     if (d.cRepeat) {
       const o = state.orders.find((o) => o.id === d.cRepeat);
-      state.draft = { ...blank(), ...o.params, fileKey: o.fileKey, fileName: o.title, step: 2 };
+      state.draft = { ...blank(), ...o.params, files: o.files, step: 2 };
+      syncFiles(o.files);
       closeDrawer();
       state.page = 'print';
       saveDraft();
@@ -343,9 +393,13 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
       if (!Object.keys(d).some((key) => /^c[A-Z]/.test(key))) return;
       event.preventDefault();
       event.stopImmediatePropagation();
+      if (button.hasAttribute('data-c-add-files') || d.cReplaceFile) {
+        chooseFiles(d.cReplaceFile || 'append');
+        return;
+      }
       // Opening the file picker must preserve the user's click activation and current input.
       if (button.hasAttribute('data-c-upload')) {
-        $('#c-file-input').click();
+        chooseFiles('all');
         return;
       }
       run(() => click(button));
@@ -407,7 +461,19 @@ export function createServerCustomer({ api, ui, studio, local, notify }) {
               plural(q.pages, 'лист', 'листа', 'листов') +
               ' на копию';
           if (two) {
-            const count = Math.ceil(q.pages / 2);
+            const count = state.draft.files?.length
+              ? state.draft.files.reduce(
+                  (sum, file) =>
+                    sum +
+                    Math.ceil(
+                      globalThis.OrderMath.selection(
+                        file.pages,
+                        state.draft.useRange ? state.draft.range : '',
+                      ).length / 2,
+                    ),
+                  0,
+                )
+              : Math.ceil(q.pages / 2);
             two.textContent =
               q.pages +
               ' стр. → ' +

@@ -63,12 +63,13 @@ async function validatePDF(file) {
       updateMetadata: false,
       throwOnInvalidObject: true,
     });
-  } catch {
+    const pages = pdf.getPageCount();
+    if (pages < 1 || pages > 2000) throw fail(400, 'Допустим PDF от 1 до 2000 страниц.');
+    return pages;
+  } catch (error) {
+    if (error.status === 400) throw error;
     throw fail(400, 'Не удалось прочитать PDF. Проверь файл и сними пароль.');
   }
-  const pages = pdf.getPageCount();
-  if (pages < 1 || pages > 2000) throw fail(400, 'Допустим PDF от 1 до 2000 страниц.');
-  return pages;
 }
 function orderView(db, row) {
   return {
@@ -76,6 +77,23 @@ function orderView(db, row) {
     kind: 'document',
     title: row.title,
     fileKey: row.file_id,
+    files: db
+      .prepare(
+        'SELECT f.*,a.params,a.quote FROM order_files a JOIN files f ON f.id=a.file_id WHERE order_id=? ORDER BY position',
+      )
+      .all(row.id)
+      .map((file) => ({
+        id: file.id,
+        name: file.name,
+        size: file.size,
+        pages: file.pages,
+        params: JSON.parse(file.params),
+        quote: JSON.parse(file.quote),
+      })),
+    printingStartedAt: row.printing_started_at,
+    cancelledAt: row.cancelled_at,
+    canCancel:
+      !row.printing_started_at && ['new', 'work', 'attention', 'review'].includes(row.status),
     status: row.status,
     total: row.total,
     created: row.created,
@@ -103,21 +121,53 @@ function accessibleOrder(db, user, id) {
   return row;
 }
 function createOrder(db, user, body) {
-  const file = db
-    .prepare('SELECT * FROM files WHERE id=? AND owner_id=?')
-    .get(String(body?.fileKey || ''), user.id);
-  if (!file) throw fail(400, 'Файл не найден. Загрузи PDF снова.');
-  const { params, quote } = parameters(body.params, file.pages);
-  const time = new Date().toISOString();
+  const ids = body?.fileKeys ?? [body?.fileKey];
+  if (
+    !Array.isArray(ids) ||
+    !ids.length ||
+    ids.length > 10 ||
+    ids.some((id) => typeof id !== 'string') ||
+    new Set(ids).size !== ids.length
+  )
+    throw fail(400, 'Выбери от 1 до 10 разных PDF.');
   return db.transaction(() => {
+    const files = ids.map((id) =>
+      db.prepare('SELECT * FROM files WHERE id=? AND owner_id=?').get(id, user.id),
+    );
+    if (files.some((file) => !file)) throw fail(400, 'Файл не найден. Загрузи PDF снова.');
+    if (files.reduce((sum, file) => sum + file.size, 0) > 50 * 1024 * 1024)
+      throw fail(400, 'Общий размер PDF — до 50 МБ.');
+    const attachments = files.map((file) => ({ file, ...parameters(body.params, file.pages) }));
+    const params = { ...attachments[0].params },
+      quote = { ...attachments[0].quote };
+    if (files.length > 1) {
+      for (const name of ['pages', 'selectedPages'])
+        params[name] = attachments.reduce((sum, a) => sum + a.params[name], 0);
+      params.pageList = [];
+      for (const name of [
+        'pages',
+        'sheets',
+        'sheetsPerCopy',
+        'impressions',
+        'singles',
+        'pairs',
+        'binding',
+        'bindingPerCopy',
+        'print',
+        'total',
+        'savings',
+      ])
+        quote[name] = attachments.reduce((sum, a) => sum + a.quote[name], 0);
+    }
+    const time = new Date().toISOString();
     const id = db
       .prepare(
         "INSERT INTO orders(owner_id,file_id,title,status,total,params,quote,comment,customer_name,customer_group,created) VALUES (?,?,?,'new',?,?,?,?,?,?,?)",
       )
       .run(
         user.id,
-        file.id,
-        file.name,
+        files[0].id,
+        files.length === 1 ? files[0].name : files[0].name + ' и ещё ' + (files.length - 1),
         quote.total,
         JSON.stringify(params),
         JSON.stringify(quote),
@@ -126,6 +176,10 @@ function createOrder(db, user, body) {
         user.group_name,
         time,
       ).lastInsertRowid;
+    const insert = db.prepare('INSERT INTO order_files VALUES (?,?,?,?,?)');
+    attachments.forEach((a, index) =>
+      insert.run(id, a.file.id, index, JSON.stringify(a.params), JSON.stringify(a.quote)),
+    );
     db.prepare('INSERT INTO events(order_id,status,time) VALUES (?,?,?)').run(id, 'new', time);
     return orderView(db, accessibleOrder(db, user, String(id)));
   })();
@@ -134,9 +188,13 @@ function modifyOrder(db, user, id, body, type) {
   if (!body || typeof body !== 'object') throw fail(400, 'Проверь параметры запроса.');
   return db.transaction(() => {
     const order = accessibleOrder(db, user, id);
+    if (type === 'status' && body.status === 'cancelled' && order.status === 'cancelled')
+      return orderView(db, order);
     if (body.version !== order.version)
       throw fail(409, 'Заказ изменился. Обнови данные и повтори действие.');
     let status = order.status;
+    let printingStartedAt = order.printing_started_at,
+      cancelledAt = order.cancelled_at;
     const time = new Date().toISOString();
     let payment = order.payment,
       paidAt = order.paid_at,
@@ -160,22 +218,25 @@ function modifyOrder(db, user, id, body, type) {
           status = 'attention';
         }
       } else if (status === 'attention') status = 'review';
+    } else if (type === 'printing') {
+      if (user.role !== 'staff') throw fail(403, 'Начать печать может только сотрудник.');
+      if (status !== 'work' || printingStartedAt)
+        throw fail(409, 'Печать уже началась или заказ не в работе.');
+      printingStartedAt = time;
     } else {
       const next = body.status;
-      if (user.role !== 'staff') {
-        if (status !== 'new' || next !== 'cancelled')
-          throw fail(403, 'Заказчик может отменить только новый заказ.');
+      if (next === 'cancelled') {
+        if (printingStartedAt || !['new', 'work', 'attention', 'review'].includes(status))
+          throw fail(409, 'После начала печати отмена недоступна.');
+        if (user.role === 'staff') {
+          if (typeof body.reason !== 'string' || !body.reason.trim() || body.reason.length > 300)
+            throw fail(400, 'Укажи причину отмены.');
+          cancelReason = body.reason.trim();
+        }
         status = 'cancelled';
-      } else if (next === 'cancelled') {
-        if (
-          !['new', 'work', 'review'].includes(status) ||
-          typeof body.reason !== 'string' ||
-          !body.reason.trim() ||
-          body.reason.length > 300
-        )
-          throw fail(400, 'Укажи причину отмены активного заказа.');
-        cancelReason = body.reason.trim();
-        status = next;
+        cancelledAt = time;
+      } else if (user.role !== 'staff') {
+        throw fail(403, 'Изменять статус может только сотрудник.');
       } else if (status === 'ready' && next === 'issued') {
         if (body.paid !== true) throw fail(400, 'Подтверди получение оплаты.');
         payment = 'paid';
@@ -186,12 +247,24 @@ function modifyOrder(db, user, id, body, type) {
       ) {
         if (['new', 'review', 'attention'].includes(status) && body.checked !== true)
           throw fail(400, 'Подтверди проверку файла или согласование.');
+        if (status === 'work' && next === 'ready' && !printingStartedAt)
+          throw fail(409, 'Сначала отметь начало печати.');
         status = next;
       } else throw fail(409, 'Недопустимый переход статуса.');
     }
     db.prepare(
-      'UPDATE orders SET status=?,payment=?,paid_at=?,cancel_reason=?,resume_status=?,unread=?,version=version+1 WHERE id=?',
-    ).run(status, payment, paidAt, cancelReason, resumeStatus, unread, id);
+      'UPDATE orders SET status=?,payment=?,paid_at=?,cancel_reason=?,resume_status=?,unread=?,printing_started_at=?,cancelled_at=?,version=version+1 WHERE id=?',
+    ).run(
+      status,
+      payment,
+      paidAt,
+      cancelReason,
+      resumeStatus,
+      unread,
+      printingStartedAt,
+      cancelledAt,
+      id,
+    );
     if (status !== order.status)
       db.prepare('INSERT INTO events(order_id,status,time) VALUES (?,?,?)').run(id, status, time);
     return orderView(db, accessibleOrder(db, user, id));
