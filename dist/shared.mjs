@@ -19,3 +19,14 @@ export function plural(n, a, b, c) {
   const v = n % 100;
   return v >= 11 && v <= 14 ? c : n % 10 === 1 ? a : n % 10 >= 2 && n % 10 <= 4 ? b : c;
 }
+
+export function downloadBlob(blob, name, { document, append = false, revokeAfter = 15000 }) {
+  const anchor = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+  anchor.href = url;
+  anchor.download = name;
+  if (append) document.body.append(anchor);
+  anchor.click();
+  if (append) anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), revokeAfter);
+}

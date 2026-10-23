@@ -357,3 +357,74 @@ test('Canvas: drag, layers, saved draft and transparent PNG export', async ({ pa
   await expect(page.locator('#s-canvas')).toBeVisible();
   expect(await studioDraft(page)).toEqual(saved);
 });
+
+test('Registration: validation, ephemeral login, remembered name and theme', async ({ page }) => {
+  await openHome(page);
+  await page.locator('#accountButton').click();
+  await page.locator('.auth-tabs [data-go="register"]').click();
+  await page.locator('#name').fill('QA Пользователь');
+  await page.locator('#group').fill('ИСП-25');
+  await page.locator('#login').fill('qa_user');
+  await page.locator('#password').fill('test2026');
+  await page.locator('#passwordConfirm').fill('different');
+  await page.locator('.auth-submit').click();
+  await expect(page.locator('#formError')).toContainText('Пароли не совпадают');
+  await expect(page.locator('#passwordConfirm')).toHaveAttribute('aria-invalid', 'true');
+  await page.locator('#passwordConfirm').fill('test2026');
+  await page.locator('.auth-submit').click();
+  await expect(page.locator('.v-greeting')).toContainText('QA Пользователь');
+  await expect(page.locator('body')).not.toHaveClass(/is-staff/);
+  await logout(page);
+  await page.locator('#login').fill('qa_user');
+  await page.locator('#password').fill('test2026');
+  await page.locator('#remember').check();
+  await page.locator('.auth-submit').click();
+  await expect(page.locator('.customer-space')).toBeVisible();
+  await logout(page);
+  await expect(page.locator('#login')).toHaveValue('qa_user');
+  await expect(page.locator('#remember')).toBeChecked();
+  await page.locator('[data-theme-choice="sky"]').click();
+  await page.reload();
+  await expect(page.locator('body')).toHaveAttribute('data-theme', 'sky');
+  await page.locator('#accountButton').click();
+  await expect(page.locator('#login')).toHaveValue('qa_user');
+  await page.locator('#password').fill('test2026');
+  await page.locator('.auth-submit').click();
+  await expect(page.locator('#formError')).toContainText('Логин или пароль не совпали');
+});
+
+test('Staff payment: issue requires payment and report exports CSV', async ({ page }) => {
+  await openHome(page);
+  await login(page, 'staff_01');
+  await page.locator('[data-w-order]').filter({ hasText: '№1052' }).click();
+  await expect(page.locator('[data-w-next="work"]')).toBeDisabled();
+  await page.locator('[data-w-checked]').check();
+  await page.locator('[data-w-next="work"]').click();
+  await expect(page.locator('.w-inspector .w-status')).toHaveText('В работе');
+  await page.locator('[data-w-next="ready"]').click();
+  await page.locator('[data-w-next="issued"]').click();
+  await expect(page.locator('#w-issue-form')).toBeVisible();
+  await page.locator('#w-issue-form button[type="submit"]').click();
+  await expect(page.locator('.w-inspector .w-status')).toHaveText('К выдаче');
+  await page.locator('#w-issue-form input[name="paid"]').check();
+  await page.locator('#w-issue-form button[type="submit"]').click();
+  await expect(page.locator('.w-inspector .w-status')).toHaveText('Выдан');
+  await expect(page.locator('.w-final-note')).toContainText('Оплата отмечена');
+  expect(
+    await page.evaluate(
+      () =>
+        JSON.parse(localStorage.getItem('okei-staff-demo-v1')).orders.find((o) => o.id === '1052')
+          .payment,
+    ),
+  ).toBe('paid');
+  await page.locator('[data-w-page="groups"]').click();
+  await expect(page.locator('.w-report')).toBeVisible();
+  const pending = page.waitForEvent('download');
+  await page.locator('[data-w-export]').click();
+  const download = await pending;
+  expect(download.suggestedFilename()).toBe('okei-orders.csv');
+  const csv = await require('node:fs/promises').readFile(await download.path(), 'utf8');
+  expect(csv.startsWith('\ufeff')).toBe(true);
+  expect(csv).toContain('"1052"');
+  expect(csv).toContain('"Выдан"');
+});

@@ -138,6 +138,37 @@ export function bindStaffActions(state, { window, document, ui, repository, cont
       notify(d.wNext === 'ready' ? 'Заказ готов к выдаче.' : 'Заказ принят в работу.');
     }
   }
+  function submitReply(o, data) {
+    const text = String(data.get('message') || '').trim();
+    if (!text) return;
+    if (update(o._ref, (current) => appendStaffMessage(current, text, data.has('pause')))) {
+      state.writing.delete(o._ref);
+      state.checked.delete(o._ref);
+      draw();
+      $('#w-message')?.focus();
+      notify(
+        o._store === fixtureKey
+          ? 'Сообщение сохранено в демозаказе.'
+          : 'Сообщение сохранено. Заказчик увидит его при входе в этом браузере.',
+      );
+    }
+  }
+  function confirmIssue(o, data) {
+    if (update(o._ref, (current) => issuePaid(current))) {
+      state.confirm = '';
+      draw();
+      notify('Выдача и оплата отмечены.');
+    }
+  }
+  function confirmCancellation(o, data) {
+    const reason = String(data.get('reason') || '').trim();
+    if (!reason) return;
+    if (update(o._ref, (current) => cancelWithReason(current, reason))) {
+      state.confirm = '';
+      draw();
+      notify('Заказ отменён. Причина сохранена.');
+    }
+  }
   document.addEventListener('click', async (e) => {
     if (!state.user || !document.body.classList.contains('is-staff')) return;
     const b = e.target.closest('button');
@@ -233,33 +264,11 @@ export function bindStaffActions(state, { window, document, ui, repository, cont
     if (!o) return;
     const data = new FormData(e.target);
     if (e.target.id === 'w-chat-form') {
-      const text = String(data.get('message') || '').trim();
-      if (!text) return;
-      if (update(o._ref, (current) => appendStaffMessage(current, text, data.has('pause')))) {
-        state.writing.delete(o._ref);
-        state.checked.delete(o._ref);
-        draw();
-        $('#w-message')?.focus();
-        notify(
-          o._store === fixtureKey
-            ? 'Сообщение сохранено в демозаказе.'
-            : 'Сообщение сохранено. Заказчик увидит его при входе в этом браузере.',
-        );
-      }
+      submitReply(o, data);
     } else if (e.target.id === 'w-issue-form' && data.has('paid') && o.status === 'ready') {
-      if (update(o._ref, (current) => issuePaid(current))) {
-        state.confirm = '';
-        draw();
-        notify('Выдача и оплата отмечены.');
-      }
+      confirmIssue(o, data);
     } else if (e.target.id === 'w-cancel-form' && ['new', 'work', 'review'].includes(o.status)) {
-      const reason = String(data.get('reason') || '').trim();
-      if (!reason) return;
-      if (update(o._ref, (current) => cancelWithReason(current, reason))) {
-        state.confirm = '';
-        draw();
-        notify('Заказ отменён. Причина сохранена.');
-      }
+      confirmCancellation(o, data);
     }
   });
   document.addEventListener('keydown', (e) => {

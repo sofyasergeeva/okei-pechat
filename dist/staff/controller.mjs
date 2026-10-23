@@ -1,3 +1,4 @@
+import { downloadBlob } from '../shared.mjs';
 import { createStaffState, visible as selectVisible, createCSV } from './orders.mjs';
 import { createStaffStorage } from './storage.mjs';
 import { createStaffViews } from './views.mjs';
@@ -98,14 +99,7 @@ export function createStaff({ window, document, storage, indexedDB, ui }) {
     $('#w-result-count').textContent = list.length;
   }
   function download(blob, name) {
-    const a = document.createElement('a'),
-      url = URL.createObjectURL(blob);
-    a.href = url;
-    a.download = name;
-    document.body.append(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    downloadBlob(blob, name, { document, append: true, revokeAfter: 60000 });
   }
   async function openFile(o) {
     if (!o.fileKey && !o.sampleFile) {

@@ -1,3 +1,4 @@
+import { downloadBlob } from '../shared.mjs';
 import { createId as uid } from '../shared.mjs';
 import { createStudioState, colors, area, fresh, confine } from './model.mjs';
 import { createStudioStorage } from './storage.mjs';
@@ -177,12 +178,7 @@ export function createStudio({ document, indexedDB, notify, placeOrder }) {
     }
   }
   function download(blob, name) {
-    const a = document.createElement('a'),
-      url = URL.createObjectURL(blob);
-    a.href = url;
-    a.download = name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 15000);
+    downloadBlob(blob, name, { document, append: false, revokeAfter: 15000 });
   }
   async function previewBlob(d) {
     const c = document.createElement('canvas');
@@ -241,34 +237,40 @@ export function createStudio({ document, indexedDB, notify, placeOrder }) {
     root.innerHTML = views.reviewHTML(snapshot, url);
     const box = $('.s-review-box');
     box.focus();
-    root.onclick = async (e) => {
-      if (e.target === root || e.target.closest('[data-s-review-close]')) {
+    function closeReview() {
+      root.hidden = true;
+      URL.revokeObjectURL(url);
+      $('[data-s-order]')?.focus();
+      return;
+    }
+    async function confirmOrder() {
+      if (state.user !== targetUser || state.revision !== version) {
+        toast('Макет изменён. Проверь его ещё раз.');
         root.hidden = true;
         URL.revokeObjectURL(url);
-        $('[data-s-order]')?.focus();
         return;
       }
+      state.saving = true;
+      const b = $('#s-confirm-order');
+      b.disabled = true;
+      b.textContent = 'Сохраняем макет…';
+      try {
+        await placeOrder(snapshot, blob);
+        URL.revokeObjectURL(url);
+      } catch {
+        toast('Заказ не сохранился. Попробуй ещё раз.');
+        b.disabled = false;
+        b.textContent = 'Подтвердить заказ';
+      } finally {
+        state.saving = false;
+      }
+    }
+    root.onclick = async (e) => {
+      if (e.target === root || e.target.closest('[data-s-review-close]')) {
+        return closeReview();
+      }
       if (e.target.closest('#s-confirm-order') && !state.saving) {
-        if (state.user !== targetUser || state.revision !== version) {
-          toast('Макет изменён. Проверь его ещё раз.');
-          root.hidden = true;
-          URL.revokeObjectURL(url);
-          return;
-        }
-        state.saving = true;
-        const b = $('#s-confirm-order');
-        b.disabled = true;
-        b.textContent = 'Сохраняем макет…';
-        try {
-          await placeOrder(snapshot, blob);
-          URL.revokeObjectURL(url);
-        } catch {
-          toast('Заказ не сохранился. Попробуй ещё раз.');
-          b.disabled = false;
-          b.textContent = 'Подтвердить заказ';
-        } finally {
-          state.saving = false;
-        }
+        await confirmOrder();
       }
     };
     root.onkeydown = (e) => {
