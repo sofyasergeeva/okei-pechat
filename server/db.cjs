@@ -12,6 +12,11 @@ function openDatabase(dataDir) {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.pragma('busy_timeout = 5000');
+  const version = db.pragma('user_version', { simple: true });
+  if (version > 3) {
+    db.close();
+    throw Error('Unsupported database version');
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, login TEXT NOT NULL UNIQUE COLLATE NOCASE, password_hash TEXT NOT NULL, name TEXT NOT NULL, group_name TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('student','staff')));
     CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires INTEGER NOT NULL);
@@ -25,13 +30,14 @@ function openDatabase(dataDir) {
     CREATE INDEX IF NOT EXISTS session_expiry ON sessions(expires);
 
   `);
-  db.transaction(() => {
-    const columns = db.pragma('table_info(orders)').map((column) => column.name);
-    if (!columns.includes('printing_started_at'))
-      db.exec('ALTER TABLE orders ADD COLUMN printing_started_at TEXT');
-    if (!columns.includes('cancelled_at'))
-      db.exec('ALTER TABLE orders ADD COLUMN cancelled_at TEXT');
-    db.exec(`
+  if (version < 2)
+    db.transaction(() => {
+      const columns = db.pragma('table_info(orders)').map((column) => column.name);
+      if (!columns.includes('printing_started_at'))
+        db.exec('ALTER TABLE orders ADD COLUMN printing_started_at TEXT');
+      if (!columns.includes('cancelled_at'))
+        db.exec('ALTER TABLE orders ADD COLUMN cancelled_at TEXT');
+      db.exec(`
       CREATE TABLE IF NOT EXISTS order_files (
         order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
         file_id TEXT NOT NULL REFERENCES files(id), position INTEGER NOT NULL,
@@ -43,7 +49,40 @@ function openDatabase(dataDir) {
       UPDATE orders SET cancelled_at=(SELECT time FROM events WHERE order_id=orders.id AND status='cancelled' ORDER BY id DESC LIMIT 1) WHERE status='cancelled' AND cancelled_at IS NULL;
       PRAGMA user_version = 2;
     `);
-  })();
+    })();
+  if (version < 3) {
+    db.pragma('foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        db.exec(
+          "ALTER TABLE files ADD COLUMN kind TEXT NOT NULL DEFAULT 'pdf' CHECK(kind IN ('pdf','design','preview','front','back'))",
+        );
+        db.exec(
+          "ALTER TABLE orders ADD COLUMN kind TEXT NOT NULL DEFAULT 'document' CHECK(kind IN ('document','merch'))",
+        );
+        db.exec(`
+          CREATE TABLE files_v3 (
+            id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id),
+            storage_name TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+            pages INTEGER CHECK(pages IS NULL OR pages BETWEEN 1 AND 2000),
+            size INTEGER NOT NULL CHECK(size BETWEEN 1 AND 26214400),
+            kind TEXT NOT NULL DEFAULT 'pdf' CHECK(kind IN ('pdf','design','preview','front','back'))
+          );
+          INSERT INTO files_v3 SELECT id,owner_id,storage_name,name,pages,size,kind FROM files;
+          DROP TABLE files;
+          ALTER TABLE files_v3 RENAME TO files;
+        `);
+        db.exec('PRAGMA user_version=3;');
+        if (db.pragma('foreign_key_check').length)
+          throw Error('Database migration violates file ownership references');
+      })();
+    } catch (error) {
+      db.close();
+      throw error;
+    } finally {
+      if (db.open) db.pragma('foreign_keys = ON');
+    }
+  }
   return db;
 }
 module.exports = { openDatabase };

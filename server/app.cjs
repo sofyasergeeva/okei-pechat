@@ -6,6 +6,7 @@ const { randomUUID } = require('node:crypto');
 const { openDatabase } = require('./db.cjs');
 const auth = require('./auth.cjs');
 const orders = require('./orders.cjs');
+const merch = require('./merch.cjs');
 async function createApi({
   dataDir = path.join(__dirname, '../var/okei'),
   origin = 'http://127.0.0.1:8080',
@@ -88,43 +89,69 @@ async function createApi({
     if (!files.length || files.reduce((sum, file) => sum + file.size, 0) > 50 * 1024 * 1024)
       throw auth.fail(400, 'Выбери от 1 до 10 PDF, суммарно до 50 МБ.');
     const pages = await Promise.all(files.map(orders.validatePDF));
-    const saved = files.map((file, index) => ({
-      id: randomUUID(),
+    const metadata = files.map((file, index) => ({
+      kind: 'pdf',
       name:
         path
           .basename(Buffer.from(file.originalname, 'latin1').toString('utf8'))
           .replace(/[\x00-\x1f\x7f]/g, '')
           .slice(0, 200) || 'document.pdf',
       pages: pages[index],
+    }));
+    const saved = await storeFiles(req.user.id, files, metadata, (saved) => saved);
+    res
+      .status(201)
+      .json(files.length === 1 && files[0].fieldname === 'file' ? saved[0] : { files: saved });
+  });
+  async function storeFiles(reqOwner, files, metadata, save) {
+    const saved = files.map((file, index) => ({
+      ...metadata[index],
+      id: randomUUID(),
       size: file.size,
     }));
     const written = [];
     try {
       for (let i = 0; i < files.length; i++) {
-        const target = path.join(directory, 'pdf', saved[i].id + '.pdf');
+        const ext = saved[i].kind === 'pdf' ? 'pdf' : saved[i].kind === 'design' ? 'json' : 'png';
+        saved[i].storageName = saved[i].id + '.' + ext;
+        const target = path.join(directory, 'pdf', saved[i].storageName);
         await fs.promises.writeFile(target, files[i].buffer, { flag: 'wx', mode: 0o600 });
         written.push(target);
       }
-      db.transaction(() => {
-        const insert = db.prepare('INSERT INTO files VALUES (?,?,?,?,?,?)');
-        saved.forEach((file) =>
-          insert.run(file.id, req.user.id, file.id + '.pdf', file.name, file.pages, file.size),
+      return db.transaction(() => {
+        const insert = db.prepare(
+          'INSERT INTO files(id,owner_id,storage_name,name,pages,size,kind) VALUES (?,?,?,?,?,?,?)',
         );
+        saved.forEach((file) =>
+          insert.run(
+            file.id,
+            reqOwner,
+            file.storageName,
+            file.name,
+            file.pages,
+            file.size,
+            file.kind,
+          ),
+        );
+        return save(saved.map(({ storageName, ...file }) => file));
       })();
     } catch (error) {
       await Promise.all(written.map((target) => fs.promises.unlink(target).catch(() => {})));
       throw error;
     }
-    res
-      .status(201)
-      .json(files.length === 1 && files[0].fieldname === 'file' ? saved[0] : { files: saved });
-  });
+  }
   function sendFile(req, res, file) {
-    if (!file) throw auth.fail(404, 'PDF не найден.');
+    if (!file) throw auth.fail(404, 'Файл не найден.');
     res.set('Content-Security-Policy', "sandbox; default-src 'none'");
     res
       .attachment(file.name)
-      .type('application/pdf')
+      .type(
+        file.kind === 'pdf'
+          ? 'application/pdf'
+          : file.kind === 'design'
+            ? 'application/json'
+            : 'image/png',
+      )
       .sendFile(path.join(directory, 'pdf', file.storage_name));
   }
   app.get('/api/files/:id', required, (req, res) => {
@@ -145,14 +172,46 @@ async function createApi({
         : db.prepare('SELECT * FROM orders WHERE owner_id=? ORDER BY id DESC').all(req.user.id);
     res.json(rows.map((row) => orders.orderView(db, row)));
   });
-  app.post('/api/orders', required, student, (req, res) =>
-    res.status(201).json(orders.createOrder(db, req.user, req.body)),
+  const uploadDesign = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 20 * 1024 * 1024, files: 4, fields: 0, parts: 4 },
+  }).any();
+  app.post(
+    '/api/orders',
+    required,
+    student,
+    (req, res, next) => (req.is('multipart/form-data') ? uploadDesign(req, res, next) : next()),
+    async (req, res) => {
+      if (!req.is('multipart/form-data'))
+        return res.status(201).json(orders.createOrder(db, req.user, req.body));
+      const design = await merch.attachments(req.files);
+      const metadata = req.files.map((file) => ({
+        kind: file.fieldname,
+        name:
+          file.fieldname === 'design'
+            ? 'design.json'
+            : file.fieldname === 'preview'
+              ? 'preview.png'
+              : 'print-' + file.fieldname + '.png',
+        pages: null,
+      }));
+      const order = await storeFiles(req.user.id, req.files, metadata, (saved) =>
+        orders.createOrder(
+          db,
+          req.user,
+          { kind: 'merch', fileKeys: saved.map((file) => file.id) },
+          design,
+        ),
+      );
+      res.status(201).json(order);
+    },
   );
   app.get('/api/orders/:id', required, (req, res) =>
     res.json(orders.orderView(db, orders.accessibleOrder(db, req.user, req.params.id))),
   );
   app.get('/api/orders/:id/file', required, (req, res) => {
     const order = orders.accessibleOrder(db, req.user, req.params.id);
+    if (order.kind !== 'document') throw auth.fail(404, 'PDF не найден.');
     sendFile(req, res, db.prepare('SELECT * FROM files WHERE id=?').get(order.file_id));
   });
   app.get('/api/orders/:id/files/:fileId', required, (req, res) => {
@@ -200,6 +259,12 @@ async function createApi({
           : error.message,
     });
   });
-  return { app, db, close: () => db.close() };
+  return {
+    app,
+    db,
+    close: () => {
+      if (db.open) db.close();
+    },
+  };
 }
 module.exports = { createApi };

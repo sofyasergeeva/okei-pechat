@@ -7,6 +7,7 @@ const { fail } = require('./auth.cjs');
 const context = vm.createContext({});
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../dist/order-math.js'), 'utf8'), context);
 const math = context.OrderMath;
+const merch = require('./merch.cjs');
 function parameters(input, pages) {
   if (
     !input ||
@@ -74,9 +75,9 @@ async function validatePDF(file) {
 function orderView(db, row) {
   return {
     id: String(row.id),
-    kind: 'document',
+    kind: row.kind,
     title: row.title,
-    fileKey: row.file_id,
+    fileKey: row.kind === 'document' ? row.file_id : undefined,
     files: db
       .prepare(
         'SELECT f.*,a.params,a.quote FROM order_files a JOIN files f ON f.id=a.file_id WHERE order_id=? ORDER BY position',
@@ -87,9 +88,26 @@ function orderView(db, row) {
         name: file.name,
         size: file.size,
         pages: file.pages,
+        kind: file.kind,
         params: JSON.parse(file.params),
         quote: JSON.parse(file.quote),
       })),
+    designKey:
+      row.kind === 'merch'
+        ? db
+            .prepare(
+              "SELECT a.file_id FROM order_files a JOIN files f ON f.id=a.file_id WHERE order_id=? AND f.kind='design'",
+            )
+            .get(row.id)?.file_id
+        : undefined,
+    previewKey:
+      row.kind === 'merch'
+        ? db
+            .prepare(
+              "SELECT a.file_id FROM order_files a JOIN files f ON f.id=a.file_id WHERE order_id=? AND f.kind='preview'",
+            )
+            .get(row.id)?.file_id
+        : undefined,
     printingStartedAt: row.printing_started_at,
     cancelledAt: row.cancelled_at,
     canCancel:
@@ -120,7 +138,65 @@ function accessibleOrder(db, user, id) {
     throw fail(404, 'Заказ не найден.');
   return row;
 }
-function createOrder(db, user, body) {
+function insertOrder(db, user, { kind, fileId, title, params, quote, attachments }) {
+  const id = db
+    .prepare(
+      "INSERT INTO orders(owner_id,file_id,title,status,total,params,quote,comment,customer_name,customer_group,created,kind) VALUES (?,?,?,'new',?,?,?,?,?,?,?,?)",
+    )
+    .run(
+      user.id,
+      fileId,
+      title,
+      quote.total,
+      JSON.stringify(params),
+      JSON.stringify(quote),
+      params.comment || '',
+      user.name,
+      user.group_name,
+      new Date().toISOString(),
+      kind,
+    ).lastInsertRowid;
+  const insert = db.prepare('INSERT INTO order_files VALUES (?,?,?,?,?)');
+  attachments.forEach((a, index) =>
+    insert.run(id, a.file.id, index, JSON.stringify(a.params || {}), JSON.stringify(a.quote || {})),
+  );
+  db.prepare('INSERT INTO events(order_id,status,time) VALUES (?,?,?)').run(
+    id,
+    'new',
+    new Date().toISOString(),
+  );
+  return orderView(db, accessibleOrder(db, user, String(id)));
+}
+function createOrder(db, user, body, design) {
+  if (body?.kind === 'merch') {
+    if (!design) throw fail(400, 'Отправь полный пакет из конструктора.');
+    return db.transaction(() => {
+      const files = (body.fileKeys || []).map((id) =>
+        db.prepare('SELECT * FROM files WHERE id=? AND owner_id=?').get(id, user.id),
+      );
+      const expected = [
+        'design',
+        'preview',
+        ...['front', 'back'].filter((side) => design[side].length),
+      ];
+      if (
+        files.length !== expected.length ||
+        files.some((file) => !file) ||
+        expected.some((kind) => files.filter((file) => file.kind === kind).length !== 1)
+      )
+        throw fail(400, 'Неполный пакет макета.');
+      const { params, quote } = merch.parameters(design);
+      return insertOrder(db, user, {
+        kind: 'merch',
+        fileId: files.find((file) => file.kind === 'design').id,
+        title: 'Футболка «' + (design.title || 'Мой дизайн') + '»',
+        params,
+        quote,
+        attachments: files.map((file) => ({ file })),
+      });
+    })();
+  }
+  if (body?.kind && body.kind !== 'document') throw fail(400, 'Недопустимый тип заказа.');
   const ids = body?.fileKeys ?? [body?.fileKey];
   if (
     !Array.isArray(ids) ||
@@ -134,7 +210,8 @@ function createOrder(db, user, body) {
     const files = ids.map((id) =>
       db.prepare('SELECT * FROM files WHERE id=? AND owner_id=?').get(id, user.id),
     );
-    if (files.some((file) => !file)) throw fail(400, 'Файл не найден. Загрузи PDF снова.');
+    if (files.some((file) => !file || file.kind !== 'pdf'))
+      throw fail(400, 'Файл не найден. Загрузи PDF снова.');
     if (files.reduce((sum, file) => sum + file.size, 0) > 50 * 1024 * 1024)
       throw fail(400, 'Общий размер PDF — до 50 МБ.');
     const attachments = files.map((file) => ({ file, ...parameters(body.params, file.pages) }));
@@ -159,29 +236,14 @@ function createOrder(db, user, body) {
       ])
         quote[name] = attachments.reduce((sum, a) => sum + a.quote[name], 0);
     }
-    const time = new Date().toISOString();
-    const id = db
-      .prepare(
-        "INSERT INTO orders(owner_id,file_id,title,status,total,params,quote,comment,customer_name,customer_group,created) VALUES (?,?,?,'new',?,?,?,?,?,?,?)",
-      )
-      .run(
-        user.id,
-        files[0].id,
-        files.length === 1 ? files[0].name : files[0].name + ' и ещё ' + (files.length - 1),
-        quote.total,
-        JSON.stringify(params),
-        JSON.stringify(quote),
-        params.comment,
-        user.name,
-        user.group_name,
-        time,
-      ).lastInsertRowid;
-    const insert = db.prepare('INSERT INTO order_files VALUES (?,?,?,?,?)');
-    attachments.forEach((a, index) =>
-      insert.run(id, a.file.id, index, JSON.stringify(a.params), JSON.stringify(a.quote)),
-    );
-    db.prepare('INSERT INTO events(order_id,status,time) VALUES (?,?,?)').run(id, 'new', time);
-    return orderView(db, accessibleOrder(db, user, String(id)));
+    return insertOrder(db, user, {
+      kind: 'document',
+      fileId: files[0].id,
+      title: files.length === 1 ? files[0].name : files[0].name + ' и ещё ' + (files.length - 1),
+      params,
+      quote,
+      attachments,
+    });
   })();
 }
 function modifyOrder(db, user, id, body, type) {

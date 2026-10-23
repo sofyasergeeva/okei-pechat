@@ -666,7 +666,7 @@ test('Batch failure: bad PDF, excess count, failed metadata and attachment write
   assert.equal(f.api.db.prepare('SELECT COUNT(*) n FROM order_files').get().n, 0);
   assert.equal(f.api.db.prepare('SELECT COUNT(*) n FROM events').get().n, 0);
 });
-test('Migration v1: existing single-PDF order, exact price, messages and file survive repeatable upgrade', async (t) => {
+test('Migration v1/v2: existing single-PDF order, exact price, messages and file survive repeatable upgrade', async (t) => {
   const f = await fixture(t),
     { c } = await f.register('legacy_single'),
     file = await (await f.upload(c)).json();
@@ -678,14 +678,233 @@ test('Migration v1: existing single-PDF order, exact price, messages and file su
     })
   ).json();
   f.api.db.exec(
-    'DROP TABLE order_files; ALTER TABLE orders DROP COLUMN printing_started_at; ALTER TABLE orders DROP COLUMN cancelled_at; PRAGMA user_version=1;',
+    'DROP TABLE order_files; ALTER TABLE orders DROP COLUMN printing_started_at; ALTER TABLE orders DROP COLUMN cancelled_at; ALTER TABLE orders DROP COLUMN kind; ALTER TABLE files DROP COLUMN kind; PRAGMA user_version=1;',
   );
   await f.restart();
   const migrated = await (await c('/api/orders/' + o.id)).json();
   assert.deepEqual(migrated, o);
-  assert.equal(f.api.db.pragma('user_version', { simple: true }), 2);
+  assert.equal(f.api.db.pragma('user_version', { simple: true }), 3);
   assert.equal(migrated.files.length, 1);
+  f.api.db.exec(
+    'ALTER TABLE orders DROP COLUMN kind; ALTER TABLE files DROP COLUMN kind; PRAGMA user_version=2;',
+  );
+  await f.restart();
+  assert.equal(f.api.db.pragma('user_version', { simple: true }), 3);
+  assert.deepEqual(await (await c('/api/orders/' + o.id)).json(), o);
+  assert.deepEqual(f.api.db.pragma('foreign_key_check'), []);
   await c('/api/orders/' + o.id + '/file');
   await f.restart();
   assert.deepEqual(await (await c('/api/orders/' + o.id)).json(), o);
+});
+
+let merchImages;
+function merchPackage(design, patch = {}) {
+  if (!merchImages) {
+    const { PNG } = require('../node_modules/playwright-core/lib/utilsBundle.js');
+    merchImages = {
+      preview: PNG.sync.write(new PNG({ width: 1440, height: 1000 })),
+      front: PNG.sync.write(new PNG({ width: 2400, height: 3368 })),
+    };
+  }
+  const body = new FormData();
+  body.set(
+    'design',
+    new Blob([JSON.stringify(design)], { type: 'application/json' }),
+    'design.json',
+  );
+  body.set('preview', new Blob([patch.preview || merchImages.preview]), 'preview.png');
+  for (const side of ['front', 'back'])
+    if (design[side]?.length && patch.omit !== side)
+      body.set(side, new Blob([patch[side] || merchImages.front]), side + '.png');
+  return body;
+}
+test('Merch: shared queue, validated price, private production files, cancellation and restart', async (t) => {
+  const f = await fixture(t),
+    { c } = await f.register('merch_customer'),
+    other = await f.register('merch_other'),
+    staff = await operator(f);
+  const design = require('../dist/studio/model.mjs').fresh();
+  design.size = 'L';
+  design.count = 2;
+  design.total = 1;
+  let order = await (
+    await c('/api/orders', { method: 'POST', status: 201, body: merchPackage(design) })
+  ).json();
+  assert.equal(order.kind, 'merch');
+  assert.equal(order.total, 1900);
+  assert.equal(order.params.size, 'L');
+  assert.equal(order.params.copies, 2);
+  assert.deepEqual(
+    order.files.map((file) => file.kind),
+    ['design', 'preview', 'front'],
+  );
+  assert.ok(order.files.every((file) => file.pages === null));
+  for (const file of order.files) {
+    await other.c('/api/orders/' + order.id + '/files/' + file.id, { status: 404 });
+    await other.c('/api/files/' + file.id, { status: 404 });
+    const response = await staff('/api/orders/' + order.id + '/files/' + file.id);
+    assert.match(response.headers.get('content-disposition'), /^attachment/);
+    if (file.kind === 'design') assert.deepEqual(await response.json(), design);
+    else assert.deepEqual(Buffer.from(await response.arrayBuffer()), merchImages[file.kind]);
+  }
+  order = await (
+    await staff('/api/orders/' + order.id + '/status', {
+      method: 'PATCH',
+      body: { version: order.version, status: 'work', checked: true },
+    })
+  ).json();
+  assert.equal(order.canCancel, true);
+  order = await (
+    await c('/api/orders/' + order.id + '/status', {
+      method: 'PATCH',
+      body: { version: order.version, status: 'cancelled' },
+    })
+  ).json();
+  assert.ok(order.cancelledAt);
+  let made = await (
+    await c('/api/orders', { method: 'POST', status: 201, body: merchPackage(design) })
+  ).json();
+  made = await (
+    await staff('/api/orders/' + made.id + '/status', {
+      method: 'PATCH',
+      body: { version: made.version, status: 'work', checked: true },
+    })
+  ).json();
+  made = await (
+    await staff('/api/orders/' + made.id + '/printing', {
+      method: 'POST',
+      body: { version: made.version },
+    })
+  ).json();
+  assert.ok(made.printingStartedAt);
+  assert.equal(made.canCancel, false);
+  await c('/api/orders/' + made.id + '/status', {
+    method: 'PATCH',
+    status: 409,
+    body: { version: made.version, status: 'cancelled' },
+  });
+  made = await (
+    await staff('/api/orders/' + made.id + '/messages', {
+      method: 'POST',
+      body: { version: made.version, text: 'Production files received' },
+    })
+  ).json();
+  made = await (
+    await c('/api/orders/' + made.id + '/messages', {
+      method: 'POST',
+      body: { version: made.version, text: 'Confirmed' },
+    })
+  ).json();
+  await f.restart();
+  assert.deepEqual(await (await staff('/api/orders/' + made.id)).json(), made);
+  for (const file of made.files) await staff('/api/orders/' + made.id + '/files/' + file.id);
+});
+test('Merch: missing or invalid assets and failed transaction never create a partial order', async (t) => {
+  const f = await fixture(t),
+    { c } = await f.register('merch_failure'),
+    fresh = require('../dist/studio/model.mjs').fresh;
+  for (const design of [
+    { ...fresh(), size: 'XXL' },
+    { ...fresh(), count: 0 },
+    { ...fresh(), front: [{ ...fresh().front[0], src: 'https://example.org/image.png' }] },
+  ])
+    await c('/api/orders', { method: 'POST', status: 400, body: merchPackage(design) });
+  await c('/api/orders', {
+    method: 'POST',
+    status: 400,
+    body: merchPackage(fresh(), { omit: 'front' }),
+  });
+  await c('/api/orders', {
+    method: 'POST',
+    status: 400,
+    body: merchPackage(fresh(), { front: Buffer.from('not a PNG') }),
+  });
+  f.api.db.exec(
+    "CREATE TRIGGER fail_merch_attachment BEFORE INSERT ON order_files WHEN NEW.position=1 BEGIN SELECT RAISE(ABORT,'test'); END",
+  );
+  await c('/api/orders', { method: 'POST', status: 500, body: merchPackage(fresh()) });
+  for (const table of ['orders', 'files', 'events', 'order_files'])
+    assert.equal(f.api.db.prepare('SELECT COUNT(*) n FROM ' + table).get().n, 0);
+  assert.deepEqual(await fs.readdir(path.join(f.api.db.name, '../pdf')), []);
+  f.api.db.exec('DROP TRIGGER fail_merch_attachment');
+  await c('/api/orders', { method: 'POST', status: 201, body: merchPackage(fresh()) });
+  assert.equal((await (await c('/api/orders')).json()).length, 1);
+});
+test('Polling: one in-flight read, visible sessions only, recovery after failure and stop on logout', async (t) => {
+  const { createApiClient, createOrderPolling } = await import('../dist/api.mjs');
+  const original = globalThis.fetch;
+  let release,
+    requests = 0;
+  globalThis.fetch = () => {
+    requests++;
+    return new Promise((resolve) => {
+      release = () =>
+        resolve(new Response('[]', { headers: { 'Content-Type': 'application/json' } }));
+    });
+  };
+  try {
+    const api = createApiClient(),
+      one = api.request('/orders'),
+      two = api.request('/orders');
+    assert.equal(one, two);
+    assert.equal(requests, 1);
+    release();
+    await one;
+  } finally {
+    globalThis.fetch = original;
+  }
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const document = {
+    hidden: false,
+    addEventListener(type, fn) {
+      this[type] = fn;
+    },
+  };
+  let calls = 0,
+    finish,
+    fail = false,
+    active = true;
+  const polling = createOrderPolling({
+    document,
+    active: () => active,
+    update: async () => {
+      calls++;
+      if (fail) {
+        fail = false;
+        throw Error('Temporary network failure');
+      }
+      await new Promise((resolve) => {
+        finish = resolve;
+      });
+    },
+  });
+  const flush = () => new Promise(setImmediate);
+  polling.start();
+  t.mock.timers.tick(27000);
+  assert.equal(calls, 1);
+  document.visibilitychange();
+  t.mock.timers.tick(54000);
+  assert.equal(calls, 1);
+  finish();
+  await flush();
+  document.hidden = true;
+  document.visibilitychange();
+  t.mock.timers.tick(54000);
+  assert.equal(calls, 1);
+  document.hidden = false;
+  fail = true;
+  document.visibilitychange();
+  await flush();
+  assert.equal(calls, 2);
+  t.mock.timers.tick(27000);
+  assert.equal(calls, 3);
+  finish();
+  await flush();
+  active = false;
+  t.mock.timers.tick(27000);
+  assert.equal(calls, 3);
+  polling.stop();
+  active = true;
+  t.mock.timers.tick(54000);
+  assert.equal(calls, 3);
 });
