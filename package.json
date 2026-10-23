@@ -4,7 +4,9 @@
   "private": true,
   "description": "Original OKEI PECHAT static project, with a standalone local launcher",
   "scripts": {
-    "start": "node scripts/serve-local.cjs"
+    "start": "node scripts/serve-local.cjs",
+    "test": "node --test tests/order-math.test.cjs tests/customer.test.cjs",
+    "test:regressions": "node --test tests/critical-regressions.cjs"
   },
   "engines": {
     "node": ">=18"
