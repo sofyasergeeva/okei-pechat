@@ -1,0 +1,43 @@
+# Dependencies and third-party PDF.js distribution
+node_modules/
+dist/assets/
+dist/favicon.svg
+
+# Preserve the exact CSS token spelling approved in the previous formatting step.
+# Stock Prettier would normalize its numeric literals and attribute-selector quotes.
+dist/editorial.css
+
+# Documentation, export metadata, hosting and editor settings
+docs/
+.openai/
+.vscode/
+README.md
+START_HERE_RU.md
+SOURCE-MANIFEST.json
+package-lock.json
+
+# Generated files, local data and temporary output
+.git/
+.cache/
+coverage/
+test-results/
+playwright-report/
+tmp/
+temp/
+user-data/
+browser-data/
+*.log
+*.tmp
+*.temp
+*.bak
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.ico
+*.pdf
+*.woff
+*.woff2
+*.ttf
+*.otf
