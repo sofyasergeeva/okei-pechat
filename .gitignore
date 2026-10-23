@@ -25,3 +25,9 @@ tmp/
 temp/
 user-data/
 browser-data/
+
+var/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*

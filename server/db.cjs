@@ -1,0 +1,30 @@
+﻿const Database = require('better-sqlite3');
+const fs = require('node:fs');
+const path = require('node:path');
+function openDatabase(dataDir) {
+  const directory = path.resolve(dataDir);
+  const publicDir = path.resolve(__dirname, '../dist');
+  const relative = path.relative(publicDir, directory);
+  if (!relative.startsWith('..') && !path.isAbsolute(relative))
+    throw Error('Data directory must be outside dist');
+  fs.mkdirSync(path.join(directory, 'pdf'), { recursive: true });
+  const db = new Database(path.join(directory, 'okei.sqlite'));
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  db.pragma('busy_timeout = 5000');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, login TEXT NOT NULL UNIQUE COLLATE NOCASE, password_hash TEXT NOT NULL, name TEXT NOT NULL, group_name TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('student','staff')));
+    CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS files(id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id), storage_name TEXT NOT NULL UNIQUE, name TEXT NOT NULL, pages INTEGER NOT NULL CHECK(pages BETWEEN 1 AND 2000), size INTEGER NOT NULL CHECK(size BETWEEN 1 AND 26214400));
+    CREATE TABLE IF NOT EXISTS orders(id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id TEXT NOT NULL REFERENCES users(id), file_id TEXT NOT NULL REFERENCES files(id), title TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('new','work','ready','issued','attention','review','cancelled')), total INTEGER NOT NULL CHECK(total>0), params TEXT NOT NULL CHECK(json_valid(params)), quote TEXT NOT NULL CHECK(json_valid(quote)), comment TEXT NOT NULL DEFAULT '', customer_name TEXT NOT NULL, customer_group TEXT NOT NULL, created TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, payment TEXT NOT NULL DEFAULT 'unpaid' CHECK(payment IN ('unpaid','paid')), paid_at TEXT, cancel_reason TEXT, resume_status TEXT, unread INTEGER NOT NULL DEFAULT 0 CHECK(unread>=0));
+    CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY, order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE, status TEXT NOT NULL, time TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY, order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE, author TEXT NOT NULL CHECK(author IN ('user','staff')), text TEXT NOT NULL CHECK(length(text) BETWEEN 1 AND 2000), time TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS order_owner ON orders(owner_id);
+    CREATE INDEX IF NOT EXISTS event_order ON events(order_id,id);
+    CREATE INDEX IF NOT EXISTS message_order ON messages(order_id,time);
+    CREATE INDEX IF NOT EXISTS session_expiry ON sessions(expires);
+    PRAGMA user_version = 1;
+  `);
+  return db;
+}
+module.exports = { openDatabase };

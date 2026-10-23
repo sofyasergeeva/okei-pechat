@@ -5,15 +5,24 @@
   "description": "Original OKEI PECHAT static project, with a standalone local launcher",
   "scripts": {
     "start": "node scripts/serve-local.cjs",
-    "test": "node --test tests/order-math.test.cjs tests/customer.test.cjs tests/critical-regressions.cjs tests/customer-modules.test.cjs tests/customer-views.test.cjs tests/staff.test.cjs tests/studio.test.cjs tests/auth.test.cjs",
+    "test": "node --test tests/order-math.test.cjs tests/customer.test.cjs tests/critical-regressions.cjs tests/customer-modules.test.cjs tests/customer-views.test.cjs tests/staff.test.cjs tests/studio.test.cjs tests/auth.test.cjs tests/server.test.cjs",
     "test:regressions": "node --test tests/critical-regressions.cjs",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "start:server": "node --env-file-if-exists=.env server/index.cjs",
+    "setup:staff": "node --env-file-if-exists=.env server/manage.cjs staff",
+    "test:server": "node --test tests/server.test.cjs"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=24"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
     "prettier": "3.7.4"
+  },
+  "dependencies": {
+    "better-sqlite3": "13.0.3",
+    "express": "5.3.0",
+    "multer": "2.5.0",
+    "pdf-lib": "1.17.1"
   }
 }
