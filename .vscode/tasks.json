@@ -1,0 +1,21 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "ОКЭИ ПЕЧАТЬ: запустить локально",
+      "type": "process",
+      "command": "node",
+      "args": [
+        "scripts/serve-local.cjs"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    }
+  ]
+}

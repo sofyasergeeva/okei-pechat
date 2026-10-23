@@ -1,0 +1,17 @@
+{
+  "approved_commit": "e7a0485ad3874eb5c10143d87cd8d5f8212ed4e7",
+  "saved_version": "appgprj_6ada0eb278cc8191a99d017b2e0c6490~appgver_707595abbe0081919b6564c9c2570e01",
+  "sha256": {
+    "customer.js": "04e1f0be1a2233a014398456b5501eda58f4b9733e4dd1c82887161ff6bdfd56",
+    "customer.css": "4be65f17ebd9211ff6ff975059b68029de44edc52277f74f157936d5e5721d04",
+    "living.js": "d9f5bbec56c5e603b006cd4d32014db4e510964df60d981e25a763f77ae1c64d",
+    "living.css": "63dad2d0586a0e1000e2bb6bf5adc8ee2adb835524d2041f39d91728d37a96aa",
+    "studio.js": "b7a84b963da0bda97ef2295b9d72cf19d29b6d7edbb3e92f5538e2f7f32a7fe3",
+    "studio.css": "0dcf582694fd96008bd81012f0df7a4bb9495b50418769dc3e54f3effa4f01ce",
+    "style.css": "57695cf4b5635d94a2311e9637e90ffe288f93f5ea66cde76af44fb2dc56f1fe",
+    "editorial.css": "296eabb0c3219709aedfa363f1e9baba7fe9da6fb4e962ca79bcdd69e40e61f7",
+    "refine.css": "3e38f35b20a05180b48bf94d306fdcdb6fc8a60d86c52da8b832b7b351beea94",
+    "ui.js": "cda7e61c25f5b5ecd8473d55230903233357d0a9eaa618a9e5decd123637c683",
+    "order-math.js": "63a5da6e207db3e7424680e9678d0664f0a40ddbf0bdefbd4061dabc37076418"
+  }
+}

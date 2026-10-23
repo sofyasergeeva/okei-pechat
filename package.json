@@ -1,0 +1,12 @@
+{
+  "name": "okei-pechat-portable",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Original OKEI PECHAT static project, with a standalone local launcher",
+  "scripts": {
+    "start": "node scripts/serve-local.cjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
