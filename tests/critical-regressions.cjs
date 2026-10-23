@@ -5,7 +5,7 @@ const { Blob } = require('node:buffer');
 const { createCustomerHarness, orderFixture } = require('./customer-harness.cjs');
 
 test('К1: сохранение профиля не перезаписывает новый статус и сообщение сотрудника', async () => {
-  const app = createCustomerHarness({ orders: [orderFixture('work')] });
+  const app = await createCustomerHarness({ orders: [orderFixture('work')] });
   await app.click({ cPage: 'profile' });
 
   // A different tab has already committed these employee changes to the shared origin.
@@ -32,7 +32,7 @@ test('К1: сохранение профиля не перезаписывает
 });
 
 test('К2: отказ localStorage не показывает успешное оформление', async () => {
-  const app = createCustomerHarness();
+  const app = await createCustomerHarness();
   app.storage.failWrites = true;
   await app.customer
     .createStudioOrder({ title: 'Quota test', size: 'M', count: 1 }, new Blob(['preview']))
@@ -45,7 +45,7 @@ test('К2: отказ localStorage не показывает успешное о
 });
 
 test('К3: незавершённое оформление Alice не создаёт заказ в аккаунте Bob', async () => {
-  const app = createCustomerHarness();
+  const app = await createCustomerHarness();
   const gate = app.pauseNextFileWrite();
   const pending = app.customer.createStudioOrder(
     { title: 'Alice design', size: 'M', count: 1 },

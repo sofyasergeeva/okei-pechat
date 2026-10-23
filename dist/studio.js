@@ -1,13 +1,7 @@
-(function () {
-  const $ = (s) => document.querySelector(s),
-    esc = (s) =>
-      String(s ?? '').replace(
-        /[&<>"']/g,
-        (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
-      );
-  const uid = () =>
-    globalThis.crypto?.randomUUID?.() ||
-    Date.now().toString(36) + Math.random().toString(36).slice(2);
+window.initializeStudio = function (helpers) {
+  const { escapeHTML: esc, createId: uid } = helpers;
+  const $ = (s) => document.querySelector(s);
+
   const colors = [
     ['#f5f3ed', 'Молочный'],
     ['#243348', 'Графитовый'],
@@ -876,4 +870,4 @@
     }
   });
   window.Studio = { view, mount, preset, loadDesign };
-})();
+};

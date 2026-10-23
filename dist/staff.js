@@ -1,22 +1,9 @@
-(function () {
+window.initializeStaff = function (helpers) {
   'use strict';
+  const { escapeHTML: E, formatMoney: rub, formatDate: stamp, createId: uid } = helpers;
   const $ = (s, r = document) => r.querySelector(s),
     $$ = (s, r = document) => [...r.querySelectorAll(s)],
     I = (n) => window.OkeiUI.icon(n),
-    E = (s) =>
-      String(s ?? '').replace(
-        /[&<>"']/g,
-        (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
-      ),
-    rub = (n) => new Intl.NumberFormat('ru-RU').format(n) + ' ₽',
-    stamp = (s) =>
-      new Intl.DateTimeFormat('ru-RU', {
-        day: 'numeric',
-        month: 'short',
-        hour: '2-digit',
-        minute: '2-digit',
-        timeZone: 'Asia/Yekaterinburg',
-      }).format(new Date(s)),
     now = () => new Date().toISOString();
   const fixtureKey = 'okei-staff-demo-v1',
     labels = {
@@ -720,9 +707,7 @@
       if (
         update(o._ref, (current) => {
           (current.messages ??= []).push({
-            id:
-              globalThis.crypto?.randomUUID?.() ||
-              Date.now().toString(36) + Math.random().toString(36).slice(2),
+            id: uid(),
             author: 'staff',
             text,
             time: now(),
@@ -866,4 +851,4 @@
       document.body.classList.remove('w-panel-open');
     },
   };
-})();
+};

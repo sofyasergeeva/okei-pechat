@@ -1,4 +1,5 @@
-(function () {
+window.initializeControls = function (helpers) {
+  const { escapeHTML: esc } = helpers;
   const $ = (s, r = document) => r.querySelector(s);
   let popup = null,
     anchor = null,
@@ -9,11 +10,7 @@
     typeTimer,
     seq = 0,
     hoursPanel = null;
-  const esc = (s) =>
-    String(s ?? '').replace(
-      /[&<>"']/g,
-      (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
-    );
+
   function focusReplacement(select) {
     const sel = select.id
       ? '#' + select.id
@@ -282,4 +279,4 @@
     });
   }).observe(document.body, { childList: true, subtree: true });
   enhance();
-})();
+};
