@@ -8,7 +8,10 @@ import {
   repeatDocument,
   placeCollectionOrder,
 } from './orders.mjs';
-export function bindCustomerActions(state, { document, studio, repository, controller, views }) {
+export function bindCustomerActions(
+  state,
+  { document, studio, repository, controller, views, enabled = () => true },
+) {
   const $ = (s, r = document) => r.querySelector(s),
     $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const { persist, getFile } = repository;
@@ -301,6 +304,7 @@ export function bindCustomerActions(state, { document, studio, repository, contr
     notice('Профиль сохранён.');
   }
   document.addEventListener('click', async (event) => {
+    if (!enabled()) return;
     const button = event.target.closest('button');
     if (!button) return;
     if (button.hasAttribute('data-c-studio') || button.dataset.cPreset) return openStudio(button);
@@ -333,12 +337,14 @@ export function bindCustomerActions(state, { document, studio, repository, contr
     if (button.hasAttribute('data-c-confirm-merch')) return confirmMerchOrder();
   });
   document.addEventListener('change', (event) => {
+    if (!enabled()) return;
     const input = event.target;
     if (input.dataset.cSelect) changePrintOption(input);
     if (input.id === 'c-copies') commitCopies(input);
     if (input.id === 'c-merch-count') commitMerchCount(input);
   });
   document.addEventListener('input', (event) => {
+    if (!enabled()) return;
     const input = event.target;
     if (input.id === 'c-range') editRange(input);
     if (input.id === 'c-copies') editCopies(input);
@@ -348,13 +354,16 @@ export function bindCustomerActions(state, { document, studio, repository, contr
     if (input.id === 'c-merch-color') editMerchColor(input);
   });
   document.addEventListener('submit', (event) => {
+    if (!enabled()) return;
     if (event.target.id === 'c-chat-form') sendMessage(event);
     if (event.target.id === 'c-profile-form') saveProfile(event);
   });
   document.addEventListener('click', (event) => {
+    if (!enabled()) return;
     if (event.target.classList.contains('c-drawer-backdrop')) closeDrawer();
   });
   document.addEventListener('keydown', (event) => {
+    if (!enabled()) return;
     if (event.key === 'Escape' && state.detail) closeDrawer();
     if (event.ctrlKey && event.key === 'Enter' && event.target.id === 'c-message') {
       event.preventDefault();

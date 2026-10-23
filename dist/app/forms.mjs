@@ -1,5 +1,5 @@
 import { hash, findAccount, registrationError } from './auth.mjs';
-export function createAuthForms(state, { document, storage, reduced, go, toast }) {
+export function createAuthForms(state, { document, storage, reduced, go, toast, api }) {
   const $ = (s, r = document) => r.querySelector(s),
     $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const main = $('#main');
@@ -90,6 +90,43 @@ export function createAuthForms(state, { document, storage, reduced, go, toast }
         $('#password').focus();
         return;
       }
+      if (api) {
+        const registered = state.screen === 'register';
+        const body = { login, password };
+        if (registered) {
+          body.name = $('#name').value.trim();
+          body.group = $('#group').value.trim();
+          const error = registrationError({
+            ...body,
+            passwordConfirm: $('#passwordConfirm').value,
+          });
+          if (error) {
+            formError(error.message);
+            return;
+          }
+        }
+        if (!registered) {
+          try {
+            if ($('#remember')?.checked) storage.setItem('okei-api-login', login);
+            else storage.removeItem('okei-api-login');
+          } catch {}
+        }
+        state.busy = true;
+        $('.auth-submit').textContent = registered ? 'Создаём…' : 'Входим…';
+        try {
+          const user = await api.request('/auth/' + (registered ? 'register' : 'login'), {
+            method: 'POST',
+            body,
+          });
+          await api.prepare(user);
+          finishAuth(user, registered);
+        } catch (error) {
+          state.busy = false;
+          $('.auth-submit').textContent = registered ? 'Создать аккаунт' : 'Войти';
+          formError(error.message);
+        }
+        return;
+      }
       if (state.screen === 'register') {
         const name = $('#name').value.trim(),
           group = $('#group').value.trim();
@@ -139,9 +176,19 @@ export function createAuthForms(state, { document, storage, reduced, go, toast }
     }
     const form = $('#authForm');
     if (!form) return;
+    if (api) {
+      const demo = $('.demo-box');
+      if (demo)
+        demo.innerHTML =
+          '<summary>Серверный режим</summary><div class="demo-caption">Создай аккаунт заказчика. Учётную запись сотрудника создаёт администратор сервера.</div>';
+      const terms = $('.terms');
+      if (terms)
+        terms.textContent =
+          'Аккаунт сохраняется на сервере. Для учебной проверки используй тестовые данные.';
+    }
     if (state.screen === 'login') {
       try {
-        const saved = storage.getItem('okei-concept-login');
+        const saved = storage.getItem(api ? 'okei-api-login' : 'okei-concept-login');
         if (saved) {
           $('#login').value = saved;
           $('#remember').checked = true;
@@ -163,12 +210,17 @@ export function createAuthForms(state, { document, storage, reduced, go, toast }
       () => {
         state.busy = false;
         state.account = {
-          id: found.login || $('#login').value.trim().toLowerCase(),
+          id: found.id || found.login || $('#login').value.trim().toLowerCase(),
           name: found.name,
           group: found.group,
           role: found.role,
         };
-        if (registered) toast('Тестовый аккаунт создан. Он действует только в этой вкладке.');
+        if (registered)
+          toast(
+            api
+              ? 'Аккаунт сохранён на сервере.'
+              : 'Тестовый аккаунт создан. Он действует только в этой вкладке.',
+          );
         go('account');
       },
       reduced ? 0 : 850,

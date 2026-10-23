@@ -1,16 +1,22 @@
-import * as helpers from './shared.mjs';
+﻿import * as helpers from './shared.mjs';
 import { createStudio } from './studio.js';
 import { createStaff } from './staff.js';
 import { createCustomer } from './customer.js';
 import { startApp } from './app/controller.mjs';
+import { createApiClient } from './api.mjs';
+import { createServerCustomer } from './server-customer.mjs';
+import { createServerStaff } from './server-staff.mjs';
+
+const serverMode = new URLSearchParams(location.search).get('mode') === 'server';
 const notify = (message) => window.entryToast?.(message);
+let customer;
 const studio = createStudio({
   document,
   indexedDB,
   notify,
   placeOrder: (design, preview) => customer.createStudioOrder(design, preview),
 });
-const customer = createCustomer({
+const localCustomer = createCustomer({
   window,
   document,
   storage: localStorage,
@@ -19,14 +25,37 @@ const customer = createCustomer({
   ui: window.OkeiUI,
   studio,
   notify,
+  enabled: () => !serverMode || customer?.isLocal(),
 });
-const staff = createStaff({
+const api = serverMode ? createApiClient() : null;
+customer = serverMode
+  ? createServerCustomer({ api, ui: window.OkeiUI, studio, local: localCustomer, notify })
+  : localCustomer;
+const staff = serverMode
+  ? createServerStaff({ api, ui: window.OkeiUI, notify })
+  : createStaff({ window, document, storage: localStorage, indexedDB, ui: window.OkeiUI });
+let initialAccount = null;
+let startupError = '';
+if (api) {
+  api.prepare = (user) => (user.role === 'staff' ? staff : customer).load(user);
+  try {
+    initialAccount = await api.request('/auth/session');
+    if (initialAccount) await api.prepare(initialAccount);
+  } catch (error) {
+    initialAccount = null;
+    startupError = error.message;
+  }
+}
+Object.assign(window, { Studio: studio, Customer: customer, Staff: staff });
+const app = startApp({
   window,
   document,
   storage: localStorage,
-  indexedDB,
   ui: window.OkeiUI,
+  customer,
+  staff,
+  api,
+  initialAccount,
 });
-Object.assign(window, { Studio: studio, Customer: customer, Staff: staff });
-startApp({ window, document, storage: localStorage, ui: window.OkeiUI, customer, staff });
 window.initializeControls(helpers);
+if (startupError) app.toast('Сервер недоступен: ' + startupError);

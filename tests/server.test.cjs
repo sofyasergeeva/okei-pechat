@@ -283,3 +283,159 @@ test('HTTP: invalid files, parameters and login attempts are rejected', async (t
     body: { login: 'missing', password: 'wrong-password' },
   });
 });
+
+test('API client: invalidating a session rejects a delayed response from the previous account', async () => {
+  const { createApiClient } = await import('../dist/api.mjs');
+  const original = globalThis.fetch;
+  let respond;
+  globalThis.fetch = () =>
+    new Promise((resolve) => {
+      respond = resolve;
+    });
+  try {
+    const api = createApiClient(),
+      pending = api.request('/orders');
+    api.invalidate();
+    respond(new Response('[]', { headers: { 'Content-Type': 'application/json' } }));
+    await assert.rejects(pending, /Сессия изменилась/);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+test('HTTP: customer cancellation, validation errors and revoked/expired sessions', async (t) => {
+  const f = await fixture(t),
+    { c, user } = await f.register('cancel_customer'),
+    file = await (await f.upload(c)).json();
+  let order = await (
+    await c('/api/orders', { method: 'POST', status: 201, body: { fileKey: file.id, params } })
+  ).json();
+  await c('/api/orders/' + order.id + '/status', { method: 'PATCH', body: null, status: 400 });
+  order = await (
+    await c('/api/orders/' + order.id + '/status', {
+      method: 'PATCH',
+      body: { version: order.version, status: 'cancelled' },
+    })
+  ).json();
+  assert.equal(order.status, 'cancelled');
+  assert.equal(order.events.length, 2);
+  await c('/api/orders/' + order.id + '/status', {
+    method: 'PATCH',
+    status: 403,
+    body: { version: order.version, status: 'work' },
+  });
+  const login = await c('/api/auth/login', {
+    method: 'POST',
+    body: { login: 'cancel_customer', password: 'test-password-2026' },
+  });
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+  await c('/api/auth/logout', { method: 'POST' });
+  await f.client()('/api/orders', { headers: { Cookie: cookie }, status: 401 });
+  await c('/api/auth/login', {
+    method: 'POST',
+    body: { login: 'cancel_customer', password: 'test-password-2026' },
+  });
+  f.api.db.prepare('UPDATE sessions SET expires=0 WHERE user_id=?').run(user.id);
+  await c('/api/orders', { status: 401 });
+});
+
+test('Process restart: a fresh Node process restores the account, session, order and PDF', async (t) => {
+  const { spawn } = require('node:child_process'),
+    net = require('node:net');
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'okei-process-test-'));
+  const port = await new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.listen(0, '127.0.0.1', () => {
+      const port = probe.address().port;
+      probe.close(() => resolve(port));
+    });
+  });
+  const origin = 'http://127.0.0.1:' + port;
+  let child;
+  async function start() {
+    child = spawn(process.execPath, [path.join(__dirname, '../server/index.cjs')], {
+      env: {
+        ...process.env,
+        PORT: String(port),
+        HOST: '127.0.0.1',
+        PUBLIC_ORIGIN: origin,
+        DATA_DIR: directory,
+        NODE_ENV: 'test',
+        COOKIE_SECURE: 'false',
+      },
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(Error('Server startup timeout')), 10000);
+      child.once('error', reject);
+      child.once('exit', (code) => {
+        clearTimeout(timer);
+        reject(Error('Server exited: ' + code));
+      });
+      child.stdout.once('data', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+  }
+  async function stop() {
+    if (!child || child.exitCode !== null) return;
+    await new Promise((resolve) => {
+      child.once('exit', resolve);
+      child.kill();
+    });
+  }
+  t.after(async () => {
+    await stop();
+    assert.equal(path.dirname(directory), os.tmpdir());
+    assert.ok(path.basename(directory).startsWith('okei-process-test-'));
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+  await start();
+  let r = await fetch(origin + '/api/auth/register', {
+    method: 'POST',
+    headers: { Origin: origin, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      login: 'restart_customer',
+      password: 'restart-password',
+      name: 'Restart',
+      group: 'TEST',
+    }),
+  });
+  assert.equal(r.status, 201);
+  const user = await r.json(),
+    cookie = r.headers.get('set-cookie').split(';')[0];
+  const form = new FormData();
+  form.set(
+    'file',
+    new Blob([await fs.readFile(path.join(__dirname, '../dist/assets/sample.pdf'))]),
+    'sample.pdf',
+  );
+  r = await fetch(origin + '/api/files', {
+    method: 'POST',
+    headers: { Origin: origin, Cookie: cookie },
+    body: form,
+  });
+  assert.equal(r.status, 201);
+  const file = await r.json();
+  r = await fetch(origin + '/api/orders', {
+    method: 'POST',
+    headers: { Origin: origin, Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileKey: file.id, params }),
+  });
+  assert.equal(r.status, 201);
+  const order = await r.json();
+  await stop();
+  await start();
+  r = await fetch(origin + '/api/auth/session', { headers: { Cookie: cookie } });
+  assert.equal((await r.json()).id, user.id);
+  r = await fetch(origin + '/api/orders/' + order.id, { headers: { Cookie: cookie } });
+  assert.deepEqual(await r.json(), order);
+  r = await fetch(origin + '/api/orders/' + order.id + '/file', { headers: { Cookie: cookie } });
+  assert.equal(
+    Buffer.from(await r.arrayBuffer())
+      .subarray(0, 5)
+      .toString(),
+    '%PDF-',
+  );
+});

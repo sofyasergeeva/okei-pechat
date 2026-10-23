@@ -25,6 +25,7 @@ export function createCustomer({
   ui,
   studio,
   notify,
+  enabled = () => true,
 }) {
   const state = createCustomerState();
   const $ = (s, r = document) => r.querySelector(s),
@@ -65,7 +66,7 @@ export function createCustomer({
     persist();
   }
   function draw(scroll = false) {
-    if (!state.user || document.body.dataset.screen !== 'account') return;
+    if (!enabled() || !state.user || document.body.dataset.screen !== 'account') return;
     $('#main').innerHTML = render(state.user);
     $('#main').className = 'c-page-enter';
     if (scroll) window.scrollTo({ top: 0, behavior: 'instant' });
@@ -332,6 +333,7 @@ export function createCustomer({
   }
   bindCustomerActions(state, {
     document,
+    enabled,
     studio,
     repository,
     views,

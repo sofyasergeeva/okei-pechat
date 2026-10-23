@@ -1,11 +1,20 @@
 import { createAppViews } from './views.mjs';
 import { createPresentation } from './presentation.mjs';
 import { createAuthForms } from './forms.mjs';
-export function startApp({ window, document, storage, ui, customer, staff }) {
+export function startApp({
+  window,
+  document,
+  storage,
+  ui,
+  customer,
+  staff,
+  api,
+  initialAccount = null,
+}) {
   const state = {
     screen: 'home',
     theme: 'sky',
-    account: null,
+    account: initialAccount,
     toastTimer: undefined,
     modalTrigger: null,
     ephemeralAccount: null,
@@ -24,7 +33,14 @@ export function startApp({ window, document, storage, ui, customer, staff }) {
     storage,
     reduced,
   });
-  const { bindForm, signal } = createAuthForms(state, { document, storage, reduced, go, toast });
+  const { bindForm, signal } = createAuthForms(state, {
+    document,
+    storage,
+    reduced,
+    go,
+    toast,
+    api,
+  });
   function dashboard() {
     return state.account?.role === 'staff'
       ? staff.render(state.account)
@@ -105,12 +121,21 @@ export function startApp({ window, document, storage, ui, customer, staff }) {
   function startUpload() {
     openModal('upload');
   }
-  function logout() {
+  async function logout() {
+    if (api) {
+      try {
+        await api.request('/auth/logout', { method: 'POST' });
+        api.invalidate();
+      } catch (error) {
+        toast(error.message);
+        return;
+      }
+    }
     state.account = null;
     staff.reset();
     customer.reset();
     go('login');
-    toast('Ты вышел из тестового аккаунта.');
+    toast(api ? 'Ты вышел из аккаунта.' : 'Ты вышел из тестового аккаунта.');
   }
   function togglePassword(b) {
     const input = $('#' + b.dataset.password);
