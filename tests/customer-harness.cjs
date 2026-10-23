@@ -40,7 +40,8 @@ function orderFixture(status = 'new', id = '2001') {
 }
 
 // This is a logic harness, not a DOM or IndexedDB conformance implementation.
-// Each instance owns its VM, JSON storage, blobs, event listeners and UI observations.
+// Each instance owns its state, JSON storage, blobs, listeners and UI observations.
+// OrderMath runs in a VM; customer ES modules are imported without source rewriting.
 async function createCustomerHarness({ orders = [], draft = null } = {}) {
   const values = new Map();
   const files = new Map();

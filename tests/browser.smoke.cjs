@@ -1,5 +1,23 @@
 const { test, expect } = require('@playwright/test');
 const { join } = require('node:path');
+const { orderFixture } = require('./customer-harness.cjs');
+
+const browserErrors = new WeakMap();
+test.beforeEach(async ({ context }) => {
+  const errors = [];
+  browserErrors.set(context, errors);
+  function observe(page) {
+    page.on('pageerror', (error) => errors.push(error.message));
+    page.on('console', (message) => {
+      if (message.type() === 'error') errors.push(message.text());
+    });
+  }
+  context.pages().forEach(observe);
+  context.on('page', observe);
+});
+test.afterEach(async ({ context }) => {
+  expect(browserErrors.get(context)).toEqual([]);
+});
 
 async function openHome(page) {
   await page.clock.setFixedTime(new Date('2026-10-23T05:00:00.000Z'));
@@ -35,10 +53,9 @@ async function preparePDF(page) {
 
 async function capture(page, info, name) {
   await page.evaluate(() => document.fonts.ready);
-  await info.attach(name, {
-    body: await page.screenshot({ animations: 'disabled' }),
-    contentType: 'image/png',
-  });
+  const path = info.outputPath(name + '.png');
+  await page.screenshot({ path, animations: 'disabled' });
+  await info.attach(name, { path, contentType: 'image/png' });
 }
 
 test('Главная, обе темы и контрольные снимки без утверждения эталонов', async ({ page }, info) => {
@@ -63,6 +80,90 @@ test('Вход заказчика и сотрудника', async ({ page }) => 
   await logout(page);
   await login(page, 'staff_01');
   await expect(page.locator('.w-heading')).toContainText('Очередь заказов.');
+});
+
+test('Существующее хранилище: PDF, черновик, профиль и переписка после перезагрузки', async ({
+  page,
+}) => {
+  await openHome(page);
+  const order = {
+    ...orderFixture('ready', '2177'),
+    fileKey: 'legacy-pdf',
+    customer: { name: 'Сохранённый профиль', group: 'ИСП-22' },
+    messages: [
+      {
+        id: 'old-message',
+        author: 'staff',
+        text: 'Сохранённый ответ',
+        time: '2026-01-15T05:00:00Z',
+      },
+    ],
+  };
+  await page.evaluate(async (order) => {
+    const pdf = await (await fetch('/assets/sample.pdf')).blob();
+    await new Promise((resolve, reject) => {
+      const request = indexedDB.open('okei-customer-files', 1);
+      request.onupgradeneeded = () => request.result.createObjectStore('files');
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const db = request.result;
+        const transaction = db.transaction('files', 'readwrite');
+        transaction.objectStore('files').put(pdf, order.fileKey);
+        transaction.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+        transaction.onerror = () => {
+          db.close();
+          reject(transaction.error);
+        };
+      };
+    });
+    localStorage.setItem(
+      'okei-customer-v1:student_23',
+      JSON.stringify({
+        orders: [order],
+        profile: order.customer,
+        draft: {
+          ...order.params,
+          fileKey: order.fileKey,
+          fileName: order.title,
+          fileSize: pdf.size,
+          step: 2,
+          copies: 2,
+          range: '',
+          useRange: false,
+          comment: 'Сохранённый черновик',
+        },
+        extension: { preserved: true },
+      }),
+    );
+  }, order);
+  await login(page, 'student_23');
+  await page.reload();
+  // The existing app starts at home and keeps authentication only in memory.
+  await expect(page.locator('body')).toHaveAttribute('data-screen', 'home');
+  await login(page, 'student_23');
+  await expect(page.locator('.v-greeting')).toContainText('Сохранённый профиль');
+  await page.locator('[data-c-order="2177"]').first().click();
+  await expect(page.locator('.c-drawer-status')).toContainText('Можно забрать');
+  const popupPromise = page.waitForEvent('popup');
+  await page.locator('[data-c-open-file="2177"]').click();
+  const popup = await popupPromise;
+  await expect.poll(() => popup.url()).toMatch(/^blob:/);
+  await popup.close();
+  await page.locator('.c-drawer-tabs [data-c-drawer-tab="chat"]').click();
+  await expect(page.locator('.c-message.staff')).toContainText('Сохранённый ответ');
+  await page.locator('[data-c-close]').click();
+  await page.locator('.c-nav [data-c-page="print"]').click();
+  await expect(page.locator('#c-copies')).toHaveValue('2');
+  await page.locator('[data-c-next]').click();
+  await expect(page.locator('#c-comment')).toHaveValue('Сохранённый черновик');
+  expect(
+    await page.evaluate(
+      () => JSON.parse(localStorage.getItem('okei-customer-v1:student_23')).extension,
+    ),
+  ).toEqual({ preserved: true });
 });
 
 test('PDF и две вкладки: сотрудник меняет статус, заказчик сохраняет профиль', async ({

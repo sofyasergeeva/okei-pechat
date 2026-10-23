@@ -1,20 +1,17 @@
+import { escapeHTML as esc } from '../shared.mjs';
+import { blank, captureSession, checkSession, sessionCurrent } from './state.mjs';
 import {
-  formatMoney as money,
-  formatDate as fmt,
-  escapeHTML as esc,
-  createId as uid,
-  plural,
-} from '../shared.mjs';
-import { blank } from './state.mjs';
-import { filteredOrders as selectOrders } from './orders.mjs';
-export function bindCustomerActions(
-  state,
-  { document, studio, repository, session, controller, views },
-) {
+  filteredOrders as selectOrders,
+  cancelOrder,
+  advanceDemoStatus,
+  addCustomerMessage,
+  repeatDocument,
+  placeCollectionOrder,
+} from './orders.mjs';
+export function bindCustomerActions(state, { document, studio, repository, controller, views }) {
   const $ = (s, r = document) => r.querySelector(s),
     $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const { persist, getFile } = repository;
-  const { captureSession, checkSession, sessionCurrent } = session;
   const {
     goto,
     draw,
@@ -44,380 +41,336 @@ export function bindCustomerActions(
     persist();
     draw();
   }
-  document.addEventListener('click', async (e) => {
-    const b = e.target.closest('button');
-    if (!b) return;
-    if (b.hasAttribute('data-c-studio') || b.dataset.cPreset) {
-      state.page = 'merch';
-      state.merchMode = 'studio';
-      draw(true);
-      if (b.dataset.cPreset) studio.preset(b.dataset.cPreset);
-      return;
-    }
-    if (b.dataset.cPage) {
-      goto(b.dataset.cPage);
-      return;
-    }
-    if (b.dataset.cOrder) {
-      openOrder(b.dataset.cOrder, b.dataset.cTab);
-      return;
-    }
-    if (b.dataset.cFilter) {
-      state.filter = b.dataset.cFilter;
-      draw();
-      return;
-    }
-    if (b.dataset.cFilterLink) {
-      state.filter = b.dataset.cFilterLink;
-      state.page = 'orders';
-      draw(true);
-      return;
-    }
-    if (b.dataset.cStep) {
-      const target = Number(b.dataset.cStep);
-      if (target === 3) {
-        const result = currentQuote();
-        if (result.error) {
-          notice(result.error);
-          return;
-        }
-      }
-      state.draft.step = target;
-      state.uploadError = '';
-      persist();
-      draw();
-      return;
-    }
-    if (b.hasAttribute('data-c-back')) {
-      state.draft.step--;
-      persist();
-      draw();
-      return;
-    }
-    if (b.hasAttribute('data-c-next')) {
-      if (state.draft.step < 3) {
-        const result = currentQuote();
-        if (result.error) {
-          state.uploadError = result.error;
-          draw();
-          return;
-        }
-        state.draft.step++;
-        persist();
-        draw(true);
-      } else await submit();
-      return;
-    }
-    if (b.hasAttribute('data-c-upload')) {
-      $('#c-file-input').click();
-      return;
-    }
-    if (b.hasAttribute('data-c-sample')) {
-      await sample();
-      return;
-    }
-    if (b.hasAttribute('data-c-clear-draft')) {
-      state.draft = blank();
-      persist();
-      draw();
-      return;
-    }
-    if (b.dataset.cChoice) {
-      updateChoice(b.dataset.cChoice, b.dataset.cValue);
-      return;
-    }
-    if (b.dataset.cCopy) {
-      state.draft.copies = Math.max(
-        1,
-        Math.min(99, Number(state.draft.copies) + Number(b.dataset.cCopy)),
-      );
-      persist();
-      draw();
-      return;
-    }
-    if (b.hasAttribute('data-c-preview-draft')) {
-      await openPDF(state.draft.fileKey);
-      return;
-    }
-    if (b.dataset.cSuccessOrder) {
-      closeMainModal();
-      openOrder(b.dataset.cSuccessOrder);
-      return;
-    }
-    if (b.hasAttribute('data-c-close')) {
-      closeDrawer();
-      return;
-    }
-    if (b.dataset.cDrawerTab) {
-      state.detailTab = b.dataset.cDrawerTab;
-      const o = state.orders.find((o) => o.id === state.detail);
-      if (state.detailTab === 'chat') {
-        o.unread = 0;
-        persist('orders');
-        draw();
-      }
-      renderDrawer();
-      return;
-    }
-    if (b.dataset.cDesignPreview) {
-      await openPDF(state.orders.find((o) => o.id === b.dataset.cDesignPreview).previewKey);
-      return;
-    }
-    if (b.dataset.cOpenFile) {
-      await openPDF(state.orders.find((o) => o.id === b.dataset.cOpenFile).fileKey);
-      return;
-    }
-    if (b.dataset.cCancel) {
-      const id = b.dataset.cCancel;
-      closeDrawer();
-      modal(
-        `<span class="c-kicker">Заказ №${id}</span><h2>Отменить заказ?</h2><p>Он ещё не принят в работу. После отмены его можно будет оформить заново.</p><button class="btn primary" data-c-confirm-cancel="${id}">Да, отменить заказ</button><button class="btn secondary" data-c-keep="${id}" style="width:100%;margin-top:10px">Оставить заказ</button>`,
-      );
-      return;
-    }
-    if (b.dataset.cConfirmCancel) {
-      const o = state.orders.find((o) => o.id === b.dataset.cConfirmCancel);
-      if (o?.status === 'new') {
-        o.status = 'cancelled';
-        o.events.push({ status: 'cancelled', time: new Date().toISOString() });
-        if (!persist('orders')) {
-          closeMainModal();
-          draw();
-          return;
-        }
-      }
-      closeMainModal();
-      draw();
-      notice('Заказ отменён в прототипе.');
-      return;
-    }
-    if (b.dataset.cKeep) {
-      closeMainModal();
-      openOrder(b.dataset.cKeep);
-      return;
-    }
-    if (b.dataset.cRepeat) {
-      const o = state.orders.find((o) => o.id === b.dataset.cRepeat);
-      if (o.params.design === 'studio') {
-        const operation = captureSession();
-        try {
-          const file = await getFile(o.designKey);
-          checkSession(operation);
-          if (!file) throw Error();
-          const design = JSON.parse(await file.text());
-          checkSession(operation);
-          closeDrawer();
-          state.page = 'merch';
-          state.merchMode = 'studio';
-          draw(true);
-          await studio.loadDesign(design);
-          checkSession(operation);
-          notice('Макет скопирован в конструктор.');
-        } catch {
-          if (sessionCurrent(operation)) notice('Макет недоступен в этом браузере.');
-        }
+  function openStudio(button) {
+    state.page = 'merch';
+    state.merchMode = 'studio';
+    draw(true);
+    if (button.dataset.cPreset) studio.preset(button.dataset.cPreset);
+  }
+
+  function filterOrders(button) {
+    state.filter = button.dataset.cFilter;
+    draw();
+  }
+  function showHistory(button) {
+    state.filter = button.dataset.cFilterLink;
+    state.page = 'orders';
+    draw(true);
+  }
+  function chooseStep(button) {
+    const target = Number(button.dataset.cStep);
+    if (target === 3) {
+      const result = currentQuote();
+      if (result.error) {
+        notice(result.error);
         return;
       }
-      if (o.kind === 'document') {
-        state.draft = {
-          ...blank(),
-          ...o.params,
-          step: o.fileKey ? 2 : 1,
-          fileKey: o.fileKey || '',
-          fileName: o.fileKey ? o.title : '',
-          pages: o.fileKey ? o.params.pages : 0,
-        };
-        persist();
+    }
+    state.draft.step = target;
+    state.uploadError = '';
+    persist();
+    draw();
+  }
+  function previousStep() {
+    state.draft.step--;
+    persist();
+    draw();
+  }
+  async function nextStep() {
+    if (state.draft.step < 3) {
+      const result = currentQuote();
+      if (result.error) {
+        state.uploadError = result.error;
+        draw();
+        return;
+      }
+      state.draft.step++;
+      persist();
+      draw(true);
+    } else await submit();
+  }
+
+  function clearDraft() {
+    state.draft = blank();
+    persist();
+    draw();
+  }
+
+  function changeCopies(button) {
+    state.draft.copies = Math.max(
+      1,
+      Math.min(99, Number(state.draft.copies) + Number(button.dataset.cCopy)),
+    );
+    persist();
+    draw();
+  }
+
+  function showCreatedOrder(button) {
+    closeMainModal();
+    openOrder(button.dataset.cSuccessOrder);
+  }
+
+  function switchDrawerTab(button) {
+    state.detailTab = button.dataset.cDrawerTab;
+    const o = state.orders.find((o) => o.id === state.detail);
+    if (state.detailTab === 'chat') {
+      o.unread = 0;
+      persist('orders');
+      draw();
+    }
+    renderDrawer();
+  }
+  async function previewDesign(button) {
+    await openPDF(state.orders.find((o) => o.id === button.dataset.cDesignPreview).previewKey);
+  }
+  async function showPDF(button) {
+    await openPDF(state.orders.find((o) => o.id === button.dataset.cOpenFile).fileKey);
+  }
+  function askCancellation(button) {
+    const id = button.dataset.cCancel;
+    closeDrawer();
+    modal(views.cancelConfirmation(id));
+  }
+  function confirmCancellation(button) {
+    const o = state.orders.find((o) => o.id === button.dataset.cConfirmCancel);
+    if (cancelOrder(o)) {
+      if (!persist('orders')) {
+        closeMainModal();
+        draw();
+        return;
+      }
+    }
+    closeMainModal();
+    draw();
+    notice('Заказ отменён в прототипе.');
+  }
+  function keepOrder(button) {
+    closeMainModal();
+    openOrder(button.dataset.cKeep);
+  }
+  async function repeatOrder(button) {
+    const o = state.orders.find((o) => o.id === button.dataset.cRepeat);
+    if (o.params.design === 'studio') {
+      const operation = captureSession(state);
+      try {
+        const file = await getFile(o.designKey);
+        checkSession(state, operation);
+        if (!file) throw Error();
+        const design = JSON.parse(await file.text());
+        checkSession(state, operation);
         closeDrawer();
-        goto('print');
-        if (!o.fileKey) notice('Загрузи PDF заново: у примера заказа нет файла.');
-      } else {
-        state.demoState = { ...state.demoState, ...o.params, count: o.params.copies };
-        closeDrawer();
-        goto('merch');
+        state.page = 'merch';
+        state.merchMode = 'studio';
+        draw(true);
+        await studio.loadDesign(design);
+        checkSession(state, operation);
+        notice('Макет скопирован в конструктор.');
+      } catch {
+        if (sessionCurrent(state, operation)) notice('Макет недоступен в этом браузере.');
       }
       return;
     }
-    if (b.dataset.cDemoStatus) {
-      const o = state.orders.find((o) => o.id === state.detail);
-      const next = {
-        new: 'work',
-        work: 'ready',
-        ready: 'issued',
-        attention: 'work',
-        review: 'work',
-      }[o.status];
-      if (next) {
-        o.status = next;
-        o.events.push({ status: next, time: new Date().toISOString() });
-        if (!persist('orders')) {
-          draw();
-          renderDrawer();
-          return;
-        }
+    if (o.kind === 'document') {
+      state.draft = repeatDocument(o);
+      persist();
+      closeDrawer();
+      goto('print');
+      if (!o.fileKey) notice('Загрузи PDF заново: у примера заказа нет файла.');
+    } else {
+      state.demoState = { ...state.demoState, ...o.params, count: o.params.copies };
+      closeDrawer();
+      goto('merch');
+    }
+  }
+  function changeDemoStatus() {
+    const o = state.orders.find((o) => o.id === state.detail);
+    if (advanceDemoStatus(o)) {
+      if (!persist('orders')) {
         draw();
         renderDrawer();
-        notice('Статус изменён только для демонстрации.');
-      } else notice('Этот заказ уже завершён.');
-      return;
-    }
-    if (b.dataset.cSize) {
-      state.demoState.size = b.dataset.cSize;
-      draw();
-      return;
-    }
-    if (b.dataset.cMerchCopy) {
-      state.demoState.count = Math.max(
-        1,
-        Math.min(30, state.demoState.count + Number(b.dataset.cMerchCopy)),
-      );
-      draw();
-      return;
-    }
-    if (b.hasAttribute('data-c-merch-order')) {
-      if (state.demoState.design === 'custom' && !state.demoState.text.trim()) {
-        notice('Добавь надпись для принта.');
-        $('#c-merch-text').focus();
         return;
       }
-      state.pendingMerch = { ...state.demoState };
-      modal(
-        `<span class="c-kicker">Проверим мерч</span><h2>${state.pendingMerch.design === 'custom' ? 'Твоя футболка.' : 'ОКЭИ / Классика'}</h2><div class="modal-row"><span>Размер / количество</span><strong>${state.pendingMerch.size} / ${state.pendingMerch.count} шт.</strong></div><div class="modal-row"><span>Стоимость примера</span><strong>${money(state.pendingMerch.count * 950)}</strong></div><p style="margin-top:18px">Наличие и итоговую цену подтвердит сотрудник. Это демонстрационный заказ.</p><button class="btn primary" data-c-confirm-merch>Подтвердить заказ <svg class="ui-icon ui-arrow" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19 19 5M5 5h14v14"/></svg></button>`,
-      );
-      return;
-    }
-    if (b.hasAttribute('data-c-confirm-merch')) {
-      if (!state.pendingMerch) return;
-      const d = state.pendingMerch;
-      const o = {
-        id: String(Math.max(1045, ...state.orders.map((o) => Number(o.id))) + 1),
-        kind: 'merch',
-        title: d.design === 'custom' ? 'Футболка «' + d.text + '»' : 'Футболка «ОКЭИ / Классика»',
-        total: d.count * 950,
-        created: new Date().toISOString(),
-        status: 'new',
-        params: { ...d, copies: d.count },
-        customer: { ...state.profile },
-        events: [{ status: 'new', time: new Date().toISOString() }],
-        messages: [],
-        unread: 0,
-      };
-      state.orders.unshift(o);
-      if (!persist('orders')) return;
-      state.pendingMerch = null;
-      closeMainModal();
-      state.page = 'overview';
-      draw(true);
-      openSuccess(o);
-      return;
-    }
-  });
-  document.addEventListener('change', (e) => {
-    const el = e.target;
-    if (el.dataset.cSelect) {
-      state.draft[el.dataset.cSelect] = el.value;
-      if (state.draft.paper === 'photo') {
-        state.draft.duplex = false;
-        state.draft.color = 'color';
-      }
-      persist();
-      draw();
-    }
-    if (el.id === 'c-copies') {
-      state.draft.copies = Math.max(1, Math.min(99, Math.round(Number(el.value) || 1)));
-      el.value = state.draft.copies;
-      persist();
-      refreshQuote();
-    }
-    if (el.id === 'c-merch-count') {
-      state.demoState.count = Math.max(1, Math.min(30, Math.round(Number(el.value) || 1)));
-      draw();
-    }
-  });
-  document.addEventListener('input', (e) => {
-    const el = e.target;
-    if (el.id === 'c-range') {
-      state.draft.range = el.value;
-      persist();
-      refreshQuote();
-    }
-    if (el.id === 'c-copies') {
-      state.draft.copies = Number(el.value);
-      persist();
-      refreshQuote();
-    }
-    if (el.id === 'c-comment') {
-      state.draft.comment = el.value;
-      persist();
-    }
-    if (el.id === 'c-search') {
-      state.search = el.value;
-      const list = filteredOrders();
-      $('#c-filter-results').innerHTML = list.length
-        ? list.map(orderRow).join('')
-        : '<div class="c-empty"><h2>Ничего не найдено.</h2><p>Попробуй другой номер или название файла.</p></div>';
-    }
-    if (el.id === 'c-merch-text') {
-      state.demoState.text = el.value;
-      $('.c-shirt-print').innerHTML = '<strong>' + esc(el.value || 'ТВОЯ НАДПИСЬ') + '</strong>';
-    }
-    if (el.id === 'c-merch-color') {
-      state.demoState.color = el.value;
-      $('.c-shirt-print').style.color = el.value;
-    }
-  });
-  document.addEventListener('submit', (e) => {
-    if (e.target.id === 'c-chat-form') {
-      e.preventDefault();
-      const input = $('#c-message'),
-        text = input.value.trim();
-      if (!text) return;
-      const o = state.orders.find((o) => o.id === state.detail);
-      o.messages.push({ id: uid(), author: 'user', text, time: new Date().toISOString() });
-      if (o.status === 'attention') {
-        o.status = 'review';
-        o.events.push({ status: 'review', time: new Date().toISOString() });
-      }
-      if (!persist('orders')) return;
       draw();
       renderDrawer();
-      $('#c-message').focus();
-      notice('Сообщение сохранено локально. Реальная доставка не подключена.');
+      notice('Статус изменён только для демонстрации.');
+    } else notice('Этот заказ уже завершён.');
+  }
+  function chooseSize(button) {
+    state.demoState.size = button.dataset.cSize;
+    draw();
+  }
+  function changeMerchCopies(button) {
+    state.demoState.count = Math.max(
+      1,
+      Math.min(30, state.demoState.count + Number(button.dataset.cMerchCopy)),
+    );
+    draw();
+  }
+  function askMerchOrder() {
+    if (state.demoState.design === 'custom' && !state.demoState.text.trim()) {
+      notice('Добавь надпись для принта.');
+      $('#c-merch-text').focus();
+      return;
     }
-    if (e.target.id === 'c-profile-form') {
-      e.preventDefault();
-      const name = $('#c-profile-name').value.trim(),
-        group = $('#c-profile-group').value.trim();
-      if (!name || !group) {
-        notice('Укажи имя и группу.');
-        return;
-      }
-      state.profile = { name, group };
-      if (!persist('profile')) return;
-      draw();
-      notice('Профиль сохранён.');
+    state.pendingMerch = { ...state.demoState };
+    modal(views.merchConfirmation(state.pendingMerch));
+  }
+  function confirmMerchOrder() {
+    if (!state.pendingMerch) return;
+    const d = state.pendingMerch;
+    const o = placeCollectionOrder(state, repository, d);
+    if (!o) return;
+    state.pendingMerch = null;
+    closeMainModal();
+    state.page = 'overview';
+    draw(true);
+    openSuccess(o);
+  }
+  function changePrintOption(input) {
+    state.draft[input.dataset.cSelect] = input.value;
+    if (state.draft.paper === 'photo') {
+      state.draft.duplex = false;
+      state.draft.color = 'color';
     }
+    persist();
+    draw();
+  }
+  function commitCopies(input) {
+    state.draft.copies = Math.max(1, Math.min(99, Math.round(Number(input.value) || 1)));
+    input.value = state.draft.copies;
+    persist();
+    refreshQuote();
+  }
+  function commitMerchCount(input) {
+    state.demoState.count = Math.max(1, Math.min(30, Math.round(Number(input.value) || 1)));
+    draw();
+  }
+  function editRange(input) {
+    state.draft.range = input.value;
+    persist();
+    refreshQuote();
+  }
+  function editCopies(input) {
+    state.draft.copies = Number(input.value);
+    persist();
+    refreshQuote();
+  }
+  function editComment(input) {
+    state.draft.comment = input.value;
+    persist();
+  }
+  function searchOrders(input) {
+    state.search = input.value;
+    const list = filteredOrders();
+    $('#c-filter-results').innerHTML = list.length
+      ? list.map(orderRow).join('')
+      : '<div class="c-empty"><h2>Ничего не найдено.</h2><p>Попробуй другой номер или название файла.</p></div>';
+  }
+  function editMerchText(input) {
+    state.demoState.text = input.value;
+    $('.c-shirt-print').innerHTML = '<strong>' + esc(input.value || 'ТВОЯ НАДПИСЬ') + '</strong>';
+  }
+  function editMerchColor(input) {
+    state.demoState.color = input.value;
+    $('.c-shirt-print').style.color = input.value;
+  }
+  function sendMessage(event) {
+    event.preventDefault();
+    const input = $('#c-message'),
+      text = input.value.trim();
+    if (!text) return;
+    const o = state.orders.find((o) => o.id === state.detail);
+    addCustomerMessage(o, text);
+    if (!persist('orders')) return;
+    draw();
+    renderDrawer();
+    $('#c-message').focus();
+    notice('Сообщение сохранено локально. Реальная доставка не подключена.');
+  }
+  function saveProfile(event) {
+    event.preventDefault();
+    const name = $('#c-profile-name').value.trim(),
+      group = $('#c-profile-group').value.trim();
+    if (!name || !group) {
+      notice('Укажи имя и группу.');
+      return;
+    }
+    state.profile = { name, group };
+    if (!persist('profile')) return;
+    draw();
+    notice('Профиль сохранён.');
+  }
+  document.addEventListener('click', async (event) => {
+    const button = event.target.closest('button');
+    if (!button) return;
+    if (button.hasAttribute('data-c-studio') || button.dataset.cPreset) return openStudio(button);
+    if (button.dataset.cPage) return goto(button.dataset.cPage);
+    if (button.dataset.cOrder) return openOrder(button.dataset.cOrder, button.dataset.cTab);
+    if (button.dataset.cFilter) return filterOrders(button);
+    if (button.dataset.cFilterLink) return showHistory(button);
+    if (button.dataset.cStep) return chooseStep(button);
+    if (button.hasAttribute('data-c-back')) return previousStep();
+    if (button.hasAttribute('data-c-next')) return nextStep();
+    if (button.hasAttribute('data-c-upload')) return $('#c-file-input').click();
+    if (button.hasAttribute('data-c-sample')) return sample();
+    if (button.hasAttribute('data-c-clear-draft')) return clearDraft();
+    if (button.dataset.cChoice) return updateChoice(button.dataset.cChoice, button.dataset.cValue);
+    if (button.dataset.cCopy) return changeCopies(button);
+    if (button.hasAttribute('data-c-preview-draft')) return openPDF(state.draft.fileKey);
+    if (button.dataset.cSuccessOrder) return showCreatedOrder(button);
+    if (button.hasAttribute('data-c-close')) return closeDrawer();
+    if (button.dataset.cDrawerTab) return switchDrawerTab(button);
+    if (button.dataset.cDesignPreview) return previewDesign(button);
+    if (button.dataset.cOpenFile) return showPDF(button);
+    if (button.dataset.cCancel) return askCancellation(button);
+    if (button.dataset.cConfirmCancel) return confirmCancellation(button);
+    if (button.dataset.cKeep) return keepOrder(button);
+    if (button.dataset.cRepeat) return repeatOrder(button);
+    if (button.dataset.cDemoStatus) return changeDemoStatus();
+    if (button.dataset.cSize) return chooseSize(button);
+    if (button.dataset.cMerchCopy) return changeMerchCopies(button);
+    if (button.hasAttribute('data-c-merch-order')) return askMerchOrder();
+    if (button.hasAttribute('data-c-confirm-merch')) return confirmMerchOrder();
   });
-  document.addEventListener('click', (e) => {
-    if (e.target.classList.contains('c-drawer-backdrop')) closeDrawer();
+  document.addEventListener('change', (event) => {
+    const input = event.target;
+    if (input.dataset.cSelect) changePrintOption(input);
+    if (input.id === 'c-copies') commitCopies(input);
+    if (input.id === 'c-merch-count') commitMerchCount(input);
   });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && state.detail) closeDrawer();
-    if (e.ctrlKey && e.key === 'Enter' && e.target.id === 'c-message') {
-      e.preventDefault();
+  document.addEventListener('input', (event) => {
+    const input = event.target;
+    if (input.id === 'c-range') editRange(input);
+    if (input.id === 'c-copies') editCopies(input);
+    if (input.id === 'c-comment') editComment(input);
+    if (input.id === 'c-search') searchOrders(input);
+    if (input.id === 'c-merch-text') editMerchText(input);
+    if (input.id === 'c-merch-color') editMerchColor(input);
+  });
+  document.addEventListener('submit', (event) => {
+    if (event.target.id === 'c-chat-form') sendMessage(event);
+    if (event.target.id === 'c-profile-form') saveProfile(event);
+  });
+  document.addEventListener('click', (event) => {
+    if (event.target.classList.contains('c-drawer-backdrop')) closeDrawer();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && state.detail) closeDrawer();
+    if (event.ctrlKey && event.key === 'Enter' && event.target.id === 'c-message') {
+      event.preventDefault();
       $('#c-chat-form').requestSubmit();
     }
-    if (e.key === 'Tab' && state.detail) {
+    if (event.key === 'Tab' && state.detail) {
       const items = $$('button,input,textarea,summary,[tabindex="0"]', $('#c-order-layer')).filter(
           (x) => !x.disabled && x.getClientRects().length,
         ),
         first = items[0],
         last = items.at(-1);
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
         last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
         first.focus();
       }
     }

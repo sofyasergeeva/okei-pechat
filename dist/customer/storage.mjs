@@ -1,11 +1,11 @@
 import { blank } from './state.mjs';
 export function createCustomerStorage(state, { storage, indexedDB, notice }) {
   let savedOrders = new Map();
-  function read(k, f) {
+  function read(key, fallback) {
     try {
-      return JSON.parse(storage.getItem(k)) ?? f;
+      return JSON.parse(storage.getItem(key)) ?? fallback;
     } catch {
-      return f;
+      return fallback;
     }
   }
   function rememberOrders() {
@@ -67,12 +67,12 @@ export function createCustomerStorage(state, { storage, indexedDB, notice }) {
       req.onerror = () => reject(req.error);
     });
   }
-  async function putFile(k, b) {
+  async function putFile(key, blob) {
     const db = await openDB();
     try {
       await new Promise((resolve, reject) => {
         const tx = db.transaction('files', 'readwrite');
-        tx.objectStore('files').put(b, k);
+        tx.objectStore('files').put(blob, key);
         tx.oncomplete = resolve;
         tx.onerror = () => reject(tx.error);
       });
@@ -80,11 +80,11 @@ export function createCustomerStorage(state, { storage, indexedDB, notice }) {
       db.close();
     }
   }
-  async function getFile(k) {
+  async function getFile(key) {
     const db = await openDB();
     try {
       return await new Promise((resolve, reject) => {
-        const req = db.transaction('files').objectStore('files').get(k);
+        const req = db.transaction('files').objectStore('files').get(key);
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
       });

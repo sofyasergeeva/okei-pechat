@@ -1,10 +1,4 @@
-import {
-  formatMoney as money,
-  formatDate as fmt,
-  escapeHTML as esc,
-  createId as uid,
-  plural,
-} from '../shared.mjs';
+import { escapeHTML as esc, createId as uid, plural } from '../shared.mjs';
 import {
   blank,
   createCustomerState,
@@ -13,7 +7,13 @@ import {
   checkSession as check,
 } from './state.mjs';
 import { createCustomerStorage } from './storage.mjs';
-import { sampleOrders, activeOrders, calculateQuote } from './orders.mjs';
+import {
+  sampleOrders,
+  activeOrders,
+  calculateQuote,
+  placeDocumentOrder,
+  placeStudioOrder,
+} from './orders.mjs';
 import { createCustomerViews } from './views.mjs';
 import { bindCustomerActions } from './actions.mjs';
 export function createCustomer({
@@ -29,7 +29,6 @@ export function createCustomer({
   const state = createCustomerState();
   const $ = (s, r = document) => r.querySelector(s),
     $$ = (s, r = document) => [...r.querySelectorAll(s)];
-  const M = orderMath;
   const captureSession = () => capture(state),
     sessionCurrent = (operation) => isCurrent(state, operation),
     checkSession = (operation) => check(state, operation);
@@ -230,30 +229,8 @@ export function createCustomer({
     state.loading = true;
     draw();
     try {
-      const file = await getFile(submittedDraft.fileKey);
-      checkSession(operation);
-      if (!file) throw Error('Файл не найден. Загрузи его снова.');
-      if (JSON.stringify(state.draft) !== JSON.stringify(submittedDraft)) {
-        throw Error('Черновик изменился. Проверь параметры и повтори оформление.');
-      }
-      const o = {
-        id: String(Math.max(1045, ...state.orders.map((o) => Number(o.id))) + 1),
-        kind: 'document',
-        title: state.draft.fileName,
-        fileKey: state.draft.fileKey,
-        total: q.total,
-        created: new Date().toISOString(),
-        status: 'new',
-        params: { ...state.draft, selectedPages: selected.length, pageList: selected },
-        quote: q,
-        comment: state.draft.comment,
-        customer: { ...state.profile },
-        events: [{ status: 'new', time: new Date().toISOString() }],
-        messages: [],
-        unread: 0,
-      };
-      state.orders.unshift(o);
-      if (!persist('orders', { clearDraft: true })) {
+      const o = await placeDocumentOrder(state, repository, operation, submittedDraft, q, selected);
+      if (!o) {
         state.loading = false;
         draw();
         return;
@@ -357,7 +334,6 @@ export function createCustomer({
     document,
     studio,
     repository,
-    session: { captureSession, checkSession, sessionCurrent },
     views,
     controller: {
       goto,
@@ -378,36 +354,7 @@ export function createCustomer({
   });
   return {
     async createStudioOrder(design, preview) {
-      const operation = captureSession();
-      const orderKey = 'design-' + uid(),
-        previewKey = 'preview-' + uid();
-      await putFile(orderKey, new Blob([JSON.stringify(design)], { type: 'application/json' }));
-      checkSession(operation);
-      await putFile(previewKey, preview);
-      checkSession(operation);
-      const o = {
-        id: String(Math.max(1045, ...state.orders.map((o) => Number(o.id))) + 1),
-        kind: 'merch',
-        title: 'Футболка «' + (design.title || 'Мой дизайн') + '»',
-        total: design.count * 950,
-        created: new Date().toISOString(),
-        status: 'new',
-        params: {
-          design: 'studio',
-          size: design.size,
-          copies: design.count,
-          shirtColorName: design.shirtColorName,
-        },
-        designKey: orderKey,
-        previewKey,
-        customer: { ...state.profile },
-        events: [{ status: 'new', time: new Date().toISOString() }],
-        messages: [],
-        unread: 0,
-      };
-      state.orders.unshift(o);
-      if (!persist('orders'))
-        throw Error('Заказ не сохранён. Проверь свободное место и повтори попытку.');
+      const o = await placeStudioOrder(state, repository, design, preview);
       state.page = 'overview';
       draw(true);
       openSuccess(o);
