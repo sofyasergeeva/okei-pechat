@@ -7,7 +7,7 @@
 
 ```powershell
 npm.cmd ci
-Copy-Item .env.example .env
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 # Заполни STAFF_LOGIN, STAFF_PASSWORD и при необходимости STAFF_NAME в локальном .env.
 npm.cmd run setup:staff
 npm.cmd run start:server
@@ -121,11 +121,14 @@ npm.cmd run start:server
 
 ## Docker: один контейнер
 
-Нужен работающий Docker Engine с Linux-контейнерами. Проверено разрешение Compose-конфигурации
-и существование digest официального Node 24; сборка и запуск здесь НЕ выполнены: установленный
-Docker Desktop сообщает «unable to start». Проверку better-sqlite3 в Linux нужно завершить на
-компьютере с работающим Engine. Dockerfile включает сборочные инструменты для нативного модуля
-и проверку его загрузки во время сборки; Node-образ закреплён по digest.
+Сборка и запуск фактически проверены в Docker Engine 29.7.2: Linux amd64, Node 24.22.1,
+SQLite 3.53.4, better-sqlite3 13.0.3. Контейнер healthy, работает с UID 1000 и read-only корнем;
+DATA_DIR имеет права 0700, .env в образе отсутствует. Проверены PDF/мерч, роли, пять приватных
+вложений, stop/start и восстановление с пересозданием контейнера: оба заказа и все байты
+сохранены, старый cookie после восстановления отклонён. Проверка использовала отдельный
+Compose-проект и новые тестовые volumes; существующие данные не затрагивались.
+Dockerfile включает инструменты сборки только в первой стадии и проверяет загрузку native-модуля;
+Node-образ закреплён по digest. Публикации образа не было.
 
 ```powershell
 docker compose build

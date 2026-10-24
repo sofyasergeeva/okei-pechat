@@ -334,9 +334,16 @@ Dockerfile содержит две стадии на закреплённом о
 не допускает .env, Git, БД, загрузки и копии. USER node, data/backups — отдельные volumes,
 read-only корень, /tmp tmpfs, cap_drop/no-new-privileges, лимиты CPU/RAM/PID, init, SIGTERM
 с ожиданием запросов и активных async-операций. /healthz используется healthcheck.
-Compose не публикует порт вне loopback. docker compose config прошёл; digest Node разрешён
-через registry. Сборка остановилась до выполнения Dockerfile: Docker Desktop unable to start.
-Работа native-модуля и прав volumes в Linux пока не подтверждена запуском контейнера.
+Compose не публикует порт вне loopback. После запуска Engine образ реально собран и проверен:
+Docker 29.7.2, Linux amd64, Node 24.22.1, SQLite 3.53.4. Native better-sqlite3 загружается,
+healthcheck healthy, процесс UID 1000, DATA_DIR 0700, корень read-only, .env в образе нет.
+В отдельном Compose-проекте созданы PDF-заказ с двумя вложениями и мерч с JSON/preview/front PNG;
+стоимости 40/1900 ₽, роль сотрудника, чужой доступ и переписка проверены. Все пять файлов
+сравнены побайтно до/после stop/start и после backup/restore с пересозданием контейнера.
+Обычный restart сохраняет сессию, восстановление отказывает старому cookie и допускает новый вход.
+Тестовые volumes/network/container удалены только после проверки нового project-prefix и labels;
+локальный образ оставлен. Существующие volumes не использовались. Реального HTTPS/TLS-прокси
+и внешнего развёртывания не было.
 
 ## Пример HTTPS reverse proxy
 
