@@ -3,11 +3,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 function openDatabase(dataDir) {
   const directory = path.resolve(dataDir);
+  if (fs.existsSync(path.join(directory, 'RESTORE_INCOMPLETE')))
+    throw Error('Incomplete restore: use a new directory and restore again');
   const publicDir = path.resolve(__dirname, '../dist');
   const relative = path.relative(publicDir, directory);
-  if (!relative.startsWith('..') && !path.isAbsolute(relative))
+  if (relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative))
     throw Error('Data directory must be outside dist');
-  fs.mkdirSync(path.join(directory, 'pdf'), { recursive: true });
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const actual = path.relative(fs.realpathSync(publicDir), fs.realpathSync(directory));
+  if (actual !== '..' && !actual.startsWith('..' + path.sep) && !path.isAbsolute(actual))
+    throw Error('Data directory must be outside dist, including symlinks');
+  fs.mkdirSync(path.join(directory, 'pdf'), { recursive: true, mode: 0o700 });
+  if (fs.lstatSync(path.join(directory, 'pdf')).isSymbolicLink())
+    throw Error('Attachment directory must not be a symlink');
   const db = new Database(path.join(directory, 'okei.sqlite'));
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');

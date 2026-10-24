@@ -41,7 +41,7 @@ function profile(body) {
     throw fail(400, 'Укажи имя и группу допустимой длины.');
   return { name: body.name.trim(), group: body.group.trim() };
 }
-async function createUser(db, body, role = 'student') {
+async function createUser(db, body, role = 'student', beforeInsert = () => {}) {
   const { login, password } = credentials(body),
     data = profile(body);
   const user = {
@@ -53,6 +53,7 @@ async function createUser(db, body, role = 'student') {
     role,
   };
   try {
+    beforeInsert();
     db.prepare('INSERT INTO users VALUES (@id,@login,@password_hash,@name,@group_name,@role)').run(
       user,
     );
@@ -69,6 +70,9 @@ function createSessions(db, { secure = false, ttl = 12 * 60 * 60 * 1000 } = {}) 
   function issue(res, user) {
     const token = randomBytes(32).toString('base64url');
     db.prepare('DELETE FROM sessions WHERE expires<=?').run(Date.now());
+    db.prepare(
+      'DELETE FROM sessions WHERE token_hash IN (SELECT token_hash FROM sessions WHERE user_id=? ORDER BY expires DESC LIMIT -1 OFFSET 9)',
+    ).run(user.id);
     db.prepare('INSERT INTO sessions VALUES (?,?,?)').run(digest(token), user.id, Date.now() + ttl);
     res.cookie(cookieName, token, { ...options, maxAge: ttl });
   }

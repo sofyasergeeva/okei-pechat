@@ -7,15 +7,33 @@ const { openDatabase } = require('./db.cjs');
 const auth = require('./auth.cjs');
 const orders = require('./orders.cjs');
 const merch = require('./merch.cjs');
+const { createLimits } = require('./limits.cjs');
 async function createApi({
   dataDir = path.join(__dirname, '../var/okei'),
   origin = 'http://127.0.0.1:8080',
   secureCookies = false,
+  serverOnly = false,
+  trustProxy = false,
+  limits: limitOptions = {},
 } = {}) {
   const directory = path.resolve(dataDir),
     db = openDatabase(directory),
     app = express();
   app.disable('x-powered-by');
+  app.set('trust proxy', trustProxy);
+  const limits = createLimits(db, limitOptions);
+  const operations = new Set();
+  function asyncRoute(handler) {
+    return (req, res, next) => {
+      const work = Promise.resolve().then(() => handler(req, res));
+      operations.add(work);
+      work.catch(next).finally(() => operations.delete(work));
+    };
+  }
+  app.get('/healthz', (req, res) => {
+    db.prepare('SELECT 1').get();
+    res.set('Cache-Control', 'no-store').json({ ok: true });
+  });
   app.locals.origin = new URL(origin).origin;
   const sessions = auth.createSessions(db, { secure: secureCookies }),
     dummy = await auth.passwordHash(randomUUID());
@@ -24,6 +42,8 @@ async function createApi({
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'same-origin',
       'X-Frame-Options': 'DENY',
+      'Content-Security-Policy':
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
     });
     if (req.path.startsWith('/api/')) {
       res.set('Cache-Control', 'no-store');
@@ -43,21 +63,30 @@ async function createApi({
   const student = (req, res, next) =>
     req.user?.role === 'student' ? next() : next(auth.fail(403, 'Доступно заказчику.'));
   const limit = auth.createLoginLimiter();
-  app.post('/api/auth/register', limit, async (req, res) => {
-    if (req.body?.role && req.body.role !== 'student')
-      throw auth.fail(400, 'Роль назначает сервер.');
-    const user = await auth.createUser(db, req.body);
-    sessions.issue(res, user);
-    res.status(201).json(user);
-  });
-  app.post('/api/auth/login', limit, async (req, res) => {
-    const { login, password } = auth.credentials(req.body),
-      user = db.prepare('SELECT * FROM users WHERE login=?').get(login);
-    const valid = await auth.verifyPassword(password, user?.password_hash || dummy);
-    if (!user || !valid) throw auth.fail(401, 'Логин или пароль не совпали.');
-    sessions.issue(res, user);
-    res.json(auth.publicUser(user));
-  });
+  app.post(
+    '/api/auth/register',
+    limit,
+    asyncRoute(async (req, res) => {
+      limits.register();
+      if (req.body?.role && req.body.role !== 'student')
+        throw auth.fail(400, 'Роль назначает сервер.');
+      const user = await auth.createUser(db, req.body, 'student', limits.register);
+      sessions.issue(res, user);
+      res.status(201).json(user);
+    }),
+  );
+  app.post(
+    '/api/auth/login',
+    limit,
+    asyncRoute(async (req, res) => {
+      const { login, password } = auth.credentials(req.body),
+        user = db.prepare('SELECT * FROM users WHERE login=?').get(login);
+      const valid = await auth.verifyPassword(password, user?.password_hash || dummy);
+      if (!user || !valid) throw auth.fail(401, 'Логин или пароль не совпали.');
+      sessions.issue(res, user);
+      res.json(auth.publicUser(user));
+    }),
+  );
   app.get('/api/auth/session', (req, res) => res.json(req.user ? auth.publicUser(req.user) : null));
   app.post('/api/auth/logout', (req, res) => {
     sessions.logout(req, res);
@@ -84,39 +113,61 @@ async function createApi({
       );
     },
   }).any();
-  app.post('/api/files', required, student, upload, async (req, res) => {
-    const files = req.files || [];
-    if (!files.length || files.reduce((sum, file) => sum + file.size, 0) > 50 * 1024 * 1024)
-      throw auth.fail(400, 'Выбери от 1 до 10 PDF, суммарно до 50 МБ.');
-    const pages = await Promise.all(files.map(orders.validatePDF));
-    const metadata = files.map((file, index) => ({
-      kind: 'pdf',
-      name:
-        path
-          .basename(Buffer.from(file.originalname, 'latin1').toString('utf8'))
-          .replace(/[\x00-\x1f\x7f]/g, '')
-          .slice(0, 200) || 'document.pdf',
-      pages: pages[index],
-    }));
-    const saved = await storeFiles(req.user.id, files, metadata, (saved) => saved);
-    res
-      .status(201)
-      .json(files.length === 1 && files[0].fieldname === 'file' ? saved[0] : { files: saved });
-  });
+  app.post(
+    '/api/files',
+    required,
+    student,
+    limits.upload,
+    upload,
+    asyncRoute(async (req, res) => {
+      const files = req.files || [];
+      if (!files.length || files.reduce((sum, file) => sum + file.size, 0) > 50 * 1024 * 1024)
+        throw auth.fail(400, 'Выбери от 1 до 10 PDF, суммарно до 50 МБ.');
+      const pages = await Promise.all(files.map(orders.validatePDF));
+      const metadata = files.map((file, index) => ({
+        kind: 'pdf',
+        name:
+          path
+            .basename(Buffer.from(file.originalname, 'latin1').toString('utf8'))
+            .replace(/[\x00-\x1f\x7f]/g, '')
+            .slice(0, 200) || 'document.pdf',
+        pages: pages[index],
+      }));
+      const saved = await storeFiles(req.user.id, files, metadata, (saved) => saved);
+      res
+        .status(201)
+        .json(files.length === 1 && files[0].fieldname === 'file' ? saved[0] : { files: saved });
+    }),
+  );
   async function storeFiles(reqOwner, files, metadata, save) {
     const saved = files.map((file, index) => ({
       ...metadata[index],
       id: randomUUID(),
       size: file.size,
     }));
+    const release = limits.reserve(
+      reqOwner,
+      files.reduce((sum, file) => sum + file.size, 0),
+      files.length,
+    );
     const written = [];
     try {
+      const disk = await fs.promises.statfs(directory);
+      const bytes = files.reduce((sum, file) => sum + file.size, 0);
+      if (disk.bavail * disk.bsize < bytes + 64 * 1024 * 1024)
+        throw auth.fail(507, 'Недостаточно свободного места. Обратись к сотруднику.');
       for (let i = 0; i < files.length; i++) {
         const ext = saved[i].kind === 'pdf' ? 'pdf' : saved[i].kind === 'design' ? 'json' : 'png';
         saved[i].storageName = saved[i].id + '.' + ext;
         const target = path.join(directory, 'pdf', saved[i].storageName);
-        await fs.promises.writeFile(target, files[i].buffer, { flag: 'wx', mode: 0o600 });
+        const handle = await fs.promises.open(target, 'wx', 0o600);
         written.push(target);
+        try {
+          await handle.writeFile(files[i].buffer);
+          await handle.sync();
+        } finally {
+          await handle.close();
+        }
       }
       return db.transaction(() => {
         const insert = db.prepare(
@@ -136,8 +187,18 @@ async function createApi({
         return save(saved.map(({ storageName, ...file }) => file));
       })();
     } catch (error) {
-      await Promise.all(written.map((target) => fs.promises.unlink(target).catch(() => {})));
+      await Promise.all(
+        written.map((target) =>
+          fs.promises
+            .unlink(target)
+            .catch((cleanup) =>
+              console.error('Attachment cleanup failed:', cleanup.code || 'UNLINK_FAILED'),
+            ),
+        ),
+      );
       throw error;
+    } finally {
+      release();
     }
   }
   function sendFile(req, res, file) {
@@ -180,8 +241,13 @@ async function createApi({
     '/api/orders',
     required,
     student,
+    (req, res, next) => {
+      limits.orders(req.user.id);
+      next();
+    },
+    limits.upload,
     (req, res, next) => (req.is('multipart/form-data') ? uploadDesign(req, res, next) : next()),
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
       if (!req.is('multipart/form-data'))
         return res.status(201).json(orders.createOrder(db, req.user, req.body));
       const design = await merch.attachments(req.files);
@@ -195,16 +261,17 @@ async function createApi({
               : 'print-' + file.fieldname + '.png',
         pages: null,
       }));
-      const order = await storeFiles(req.user.id, req.files, metadata, (saved) =>
-        orders.createOrder(
+      const order = await storeFiles(req.user.id, req.files, metadata, (saved) => {
+        limits.orders(req.user.id);
+        return orders.createOrder(
           db,
           req.user,
           { kind: 'merch', fileKeys: saved.map((file) => file.id) },
           design,
-        ),
-      );
+        );
+      });
       res.status(201).json(order);
-    },
+    }),
   );
   app.get('/api/orders/:id', required, (req, res) =>
     res.json(orders.orderView(db, orders.accessibleOrder(db, req.user, req.params.id))),
@@ -229,9 +296,11 @@ async function createApi({
   app.patch('/api/orders/:id/status', required, (req, res) =>
     res.json(orders.modifyOrder(db, req.user, req.params.id, req.body, 'status')),
   );
-  app.post('/api/orders/:id/messages', required, (req, res) =>
-    res.json(orders.modifyOrder(db, req.user, req.params.id, req.body, 'message')),
-  );
+  app.post('/api/orders/:id/messages', required, (req, res) => {
+    orders.accessibleOrder(db, req.user, req.params.id);
+    limits.message(req.params.id);
+    res.json(orders.modifyOrder(db, req.user, req.params.id, req.body, 'message'));
+  });
   app.post('/api/orders/:id/read', required, student, (req, res) => {
     orders.accessibleOrder(db, req.user, req.params.id);
     db.prepare('UPDATE orders SET unread=0 WHERE id=? AND owner_id=?').run(
@@ -241,6 +310,24 @@ async function createApi({
     res.json({ ok: true });
   });
   app.use('/api', (req, res) => res.status(404).json({ error: 'API не найден.' }));
+  if (serverOnly)
+    app.use((req, res, next) => {
+      if (!['GET', 'HEAD'].includes(req.method)) return next();
+      let canonical;
+      try {
+        canonical = path.posix
+          .normalize(decodeURIComponent(req.path).replaceAll('\\', '/'))
+          .toLowerCase();
+      } catch {
+        return next();
+      }
+      if (!['/', '/index.html'].includes(canonical)) return next();
+      const html = fs.readFileSync(path.join(__dirname, '../dist/index.html'), 'utf8');
+      res
+        .set('Cache-Control', 'no-store')
+        .type('html')
+        .send(html.replace('<html lang="ru"', '<html lang="ru" data-mode="server"'));
+    });
   app.use(
     express.static(path.join(__dirname, '../dist'), {
       dotfiles: 'deny',
@@ -250,18 +337,32 @@ async function createApi({
   );
   app.use((error, req, res, next) => {
     if (res.headersSent) return next(error);
-    const status = error instanceof multer.MulterError ? 400 : error.status || 500;
-    if (status >= 500) console.error('API error:', error.code || error.message);
+    const status =
+      error instanceof multer.MulterError
+        ? 400
+        : error.code === 'ENOENT'
+          ? 404
+          : error.status || 500;
+    if (status >= 500) console.error('API error:', error.code || 'INTERNAL_ERROR');
     res.status(status).json({
       error:
-        status >= 500
-          ? 'Не удалось сохранить или загрузить данные. Повтори действие.'
-          : error.message,
+        status === 507
+          ? 'Недостаточно свободного места. Обратись к сотруднику.'
+          : status >= 500
+            ? 'Не удалось сохранить или загрузить данные. Повтори действие.'
+            : error.code === 'ENOENT'
+              ? 'Файл не найден.'
+              : error.type === 'entity.parse.failed'
+                ? 'Некорректный JSON запроса.'
+                : error.message,
     });
   });
   return {
     app,
     db,
+    async drain() {
+      while (operations.size) await Promise.allSettled([...operations]);
+    },
     close: () => {
       if (db.open) db.close();
     },

@@ -446,3 +446,40 @@ test('Server: merch production files and polling preserve customer/staff drafts 
     await staff.close();
   }
 });
+
+test('Server: root forces server authentication and all resources work without external network', async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  try {
+    const page = await context.newPage(),
+      errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.route('https://**', (route) => route.abort());
+    await page.goto('http://127.0.0.1:18088/?mode=demo');
+    await expect(page.locator('html')).toHaveAttribute('data-mode', 'server');
+    await page.evaluate(() => document.fonts.ready);
+    expect(await page.evaluate(() => document.fonts.check('650 16px Manrope'))).toBeTruthy();
+    const fonts = await page.evaluate(() =>
+      performance
+        .getEntriesByType('resource')
+        .filter((x) => x.name.endsWith('.woff2'))
+        .map((x) => ({ url: x.name, bytes: x.decodedBodySize })),
+    );
+    expect(fonts.length).toBeGreaterThan(0);
+    expect(
+      fonts.every((x) => x.url.startsWith('http://127.0.0.1:18088/assets/fonts/') && x.bytes > 0),
+    ).toBeTruthy();
+    await page.locator('#accountButton').click();
+    await page.locator('#login').fill('student_23');
+    await page.locator('#password').fill('okei2026');
+    const response = page.waitForResponse((r) => r.url().endsWith('/api/auth/login'));
+    await page.locator('#authForm button[type=submit]').click();
+    expect((await response).status()).toBe(401);
+    await expect(page.locator('#formError')).toContainText('Логин или пароль не совпали.');
+    await expect(page.locator('.customer-space')).toHaveCount(0);
+    expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});

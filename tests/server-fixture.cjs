@@ -5,7 +5,11 @@ const path = require('node:path');
 const os = require('node:os');
 (async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'okei-browser-api-'));
-  const api = await createApi({ dataDir: directory, origin: 'http://127.0.0.1:18088' });
+  const api = await createApi({
+    dataDir: directory,
+    origin: 'http://127.0.0.1:18088',
+    serverOnly: true,
+  });
   await createUser(
     api.db,
     {
@@ -20,13 +24,14 @@ const os = require('node:os');
   for (const signal of ['SIGTERM', 'SIGINT'])
     process.on(signal, () => {
       server.close(async () => {
+        await api.drain();
         api.close();
         if (
           path.dirname(directory) !== os.tmpdir() ||
           !path.basename(directory).startsWith('okei-browser-api-')
         )
           throw Error('Invalid test directory');
-        await fs.rm(directory, { recursive: true, force: true });
+        await fs.rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
         process.exit(0);
       });
       server.closeAllConnections();

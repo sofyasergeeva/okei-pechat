@@ -7,7 +7,9 @@ import { createApiClient } from './api.mjs';
 import { createServerCustomer } from './server-customer.mjs';
 import { createServerStaff } from './server-staff.mjs';
 
-const serverMode = new URLSearchParams(location.search).get('mode') === 'server';
+const serverMode =
+  document.documentElement.dataset.mode === 'server' ||
+  new URLSearchParams(location.search).get('mode') === 'server';
 const notify = (message) => window.entryToast?.(message);
 let customer;
 const studio = createStudio({

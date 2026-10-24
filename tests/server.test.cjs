@@ -16,11 +16,11 @@ const params = {
   range: '',
   comment: '',
 };
-async function fixture(t) {
+async function fixture(t, options = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'okei-api-test-'));
   let api, server, origin;
   async function start() {
-    api = await createApi({ dataDir: directory });
+    api = await createApi({ dataDir: directory, ...options });
     server = await new Promise((resolve) => {
       const s = api.app.listen(0, '127.0.0.1', () => resolve(s));
     });
@@ -32,6 +32,7 @@ async function fixture(t) {
       server.close(resolve);
       server.closeAllConnections();
     });
+    await api.drain();
     api.close();
   }
   await start();
@@ -39,7 +40,7 @@ async function fixture(t) {
     await stop();
     assert.equal(path.dirname(directory), os.tmpdir());
     assert.ok(path.basename(directory).startsWith('okei-api-test-'));
-    await fs.rm(directory, { recursive: true, force: true });
+    await fs.rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
   function client() {
     let cookie = '';
@@ -72,7 +73,7 @@ async function fixture(t) {
     });
     return { c, user: await r.json() };
   }
-  async function upload(c, bytes) {
+  async function upload(c, bytes, status = 201) {
     const form = new FormData();
     form.set(
       'file',
@@ -81,9 +82,10 @@ async function fixture(t) {
       }),
       'sample.pdf',
     );
-    return c('/api/files', { method: 'POST', body: form, status: 201 });
+    return c('/api/files', { method: 'POST', body: form, status });
   }
   return {
+    directory,
     client,
     register,
     upload,
@@ -907,4 +909,267 @@ test('Polling: one in-flight read, visible sessions only, recovery after failure
   active = true;
   t.mock.timers.tick(54000);
   assert.equal(calls, 3);
+});
+
+test('Limits: failed filesystem writes roll back, concurrent uploads respect quotas, orders/users/messages are bounded', async (t) => {
+  const bytes = await fs.readFile(path.join(__dirname, '../dist/assets/sample.pdf'));
+  const f = await fixture(t, {
+    limits: {
+      userBytes: bytes.length,
+      totalBytes: bytes.length * 2,
+      userOrders: 1,
+      totalOrders: 2,
+      users: 3,
+    },
+  });
+  const { c, user } = await f.register('quota_alice');
+  const originalOpen = fs.open;
+  fs.open = async (...args) => {
+    const handle = await originalOpen(...args);
+    if (String(args[0]).startsWith(path.join(f.directory, 'pdf'))) {
+      const write = handle.writeFile.bind(handle);
+      handle.writeFile = async () => {
+        await write(Buffer.from('partial'));
+        throw Object.assign(Error('simulated disk failure'), { code: 'ENOSPC' });
+      };
+    }
+    return handle;
+  };
+  try {
+    await f.upload(c, bytes, 500);
+  } finally {
+    fs.open = originalOpen;
+  }
+  assert.deepEqual(await fs.readdir(path.join(f.directory, 'pdf')), []);
+  assert.equal(f.api.db.prepare('SELECT COUNT(*) n FROM files').get().n, 0);
+  const statfs = fs.statfs;
+  fs.statfs = async () => ({ bavail: 0, bsize: 4096 });
+  try {
+    await f.upload(c, bytes, 507);
+  } finally {
+    fs.statfs = statfs;
+  }
+  assert.deepEqual(await fs.readdir(path.join(f.directory, 'pdf')), []);
+  const results = await Promise.all([
+    f.upload(c, bytes, [201, 413, 429]),
+    f.upload(c, bytes, [201, 413, 429]),
+  ]);
+  assert.equal(results.filter((r) => r.status === 201).length, 1);
+  const file = await results.find((r) => r.status === 201).json();
+  const bob = await f.register('quota_bob'),
+    carol = await f.register('quota_carol');
+  const second = await (await f.upload(bob.c, bytes)).json();
+  await f.upload(carol.c, bytes, 413);
+  await f.register('quota_excess').then(
+    () => assert.fail('Registration must be rejected'),
+    (error) => assert.match(error.message, /429/),
+  );
+  const order = await newOrder(c, [file.id]);
+  await c('/api/orders', { method: 'POST', status: 429, body: { fileKey: file.id, params } });
+  await newOrder(bob.c, [second.id]);
+  await carol.c('/api/orders', { method: 'POST', status: 429, body: { fileKey: file.id, params } });
+  const insert = f.api.db.prepare('INSERT INTO messages VALUES (?,?,?,?,?)');
+  f.api.db.transaction(() => {
+    for (let i = 0; i < 200; i++)
+      insert.run('quota-' + i, order.id, 'user', 'bounded', new Date().toISOString());
+  })();
+  await c('/api/orders/' + order.id + '/messages', {
+    method: 'POST',
+    status: 429,
+    body: { version: order.version, text: 'beyond limit' },
+  });
+  assert.equal(f.api.db.prepare('SELECT COUNT(*) n FROM messages').get().n, 200);
+  assert.equal(f.api.db.prepare('SELECT SUM(size) n FROM files').get().n, bytes.length * 2);
+  assert.equal(f.api.db.prepare('SELECT COUNT(*) n FROM files WHERE owner_id=?').get(user.id).n, 1);
+  const row = f.api.db.prepare('SELECT storage_name FROM files WHERE id=?').get(file.id);
+  await fs.unlink(path.join(f.directory, 'pdf', row.storage_name));
+  const missing = await c('/api/files/' + file.id, { status: 404 });
+  assert.deepEqual(await missing.json(), { error: 'Файл не найден.' });
+});
+
+test('Backup: live WAL snapshot restores multiple PDF/merch orders and every byte; damaged backups and overwrite are rejected', async (t) => {
+  const { createBackup, restoreBackup } = require('../server/backup.cjs');
+  const f = await fixture(t),
+    { c } = await f.register('backup_customer');
+  const staff = await operator(f);
+  const first = await (await f.upload(c)).json(),
+    second = await (await f.upload(c)).json();
+  let pdf = await newOrder(c, [first.id, second.id]);
+  pdf = await (
+    await staff('/api/orders/' + pdf.id + '/messages', {
+      method: 'POST',
+      body: { version: pdf.version, text: 'Saved before backup' },
+    })
+  ).json();
+  const merch = await (
+    await c('/api/orders', {
+      method: 'POST',
+      status: 201,
+      body: merchPackage(require('../dist/studio/model.mjs').fresh()),
+    })
+  ).json();
+  assert.ok((await fs.stat(path.join(f.directory, 'okei.sqlite-wal'))).size > 0);
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'okei-backup-test-'));
+  let restored, server;
+  t.after(async () => {
+    if (server)
+      await new Promise((resolve) => {
+        server.close(resolve);
+        server.closeAllConnections();
+      });
+    restored?.close();
+    assert.equal(path.dirname(temp), os.tmpdir());
+    assert.ok(path.basename(temp).startsWith('okei-backup-test-'));
+    await fs.rm(temp, { recursive: true, force: true });
+  });
+  const snapshot = path.join(temp, 'snapshot'),
+    destination = path.join(temp, 'restored');
+  await createBackup(f.directory, snapshot);
+  await c('/api/orders/' + pdf.id + '/messages', {
+    method: 'POST',
+    body: { version: pdf.version, text: 'Only in live database' },
+  });
+  await f.restart();
+  await restoreBackup(snapshot, destination);
+  restored = await createApi({ dataDir: destination });
+  assert.equal(restored.db.prepare('SELECT COUNT(*) n FROM sessions').get().n, 0);
+  server = await new Promise((resolve) => {
+    const s = restored.app.listen(0, '127.0.0.1', () => resolve(s));
+  });
+  const origin = 'http://127.0.0.1:' + server.address().port;
+  restored.app.locals.origin = origin;
+  const login = await fetch(origin + '/api/auth/login', {
+    method: 'POST',
+    headers: { Origin: origin, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ login: 'backup_customer', password: 'test-password-2026' }),
+  });
+  assert.equal(login.status, 200);
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+  const response = await fetch(origin + '/api/orders', { headers: { Cookie: cookie } });
+  assert.deepEqual(await response.json(), [merch, pdf]);
+  const rows = restored.db.prepare('SELECT storage_name,size FROM files').all();
+  assert.equal(rows.length, 5);
+  for (const row of rows)
+    assert.deepEqual(
+      await fs.readFile(path.join(destination, 'pdf', row.storage_name)),
+      await fs.readFile(path.join(f.directory, 'pdf', row.storage_name)),
+    );
+  for (const order of [pdf, merch])
+    for (const file of order.files) {
+      const r = await fetch(origin + '/api/orders/' + order.id + '/files/' + file.id, {
+        headers: { Cookie: cookie },
+      });
+      assert.equal(r.status, 200);
+      assert.equal((await r.arrayBuffer()).byteLength, file.size);
+    }
+  const partial = path.join(temp, 'partial-restore');
+  const copyFile = fs.copyFile;
+  fs.copyFile = async (from, to, ...args) => {
+    if (String(to).startsWith(path.join(partial, 'pdf')))
+      throw Object.assign(Error('simulated copy failure'), { code: 'ENOSPC' });
+    return copyFile(from, to, ...args);
+  };
+  try {
+    await assert.rejects(restoreBackup(snapshot, partial), /simulated copy failure/);
+  } finally {
+    fs.copyFile = copyFile;
+  }
+  assert.throws(() => require('../server/db.cjs').openDatabase(partial), /Incomplete restore/);
+  await assert.rejects(restoreBackup(snapshot, destination), /already exists/);
+  await assert.rejects(createBackup(f.directory, path.join(f.directory, 'nested')), /separate/);
+  const file = path.join(snapshot, 'pdf', rows[0].storage_name),
+    damaged = await fs.readFile(file);
+  damaged[0] ^= 1;
+  await fs.writeFile(file, damaged);
+  await assert.rejects(restoreBackup(snapshot, path.join(temp, 'damaged')), /checksum/);
+  assert.equal(require('node:fs').existsSync(path.join(temp, 'damaged')), false);
+});
+
+test('Production boundary: server-only entry, secure cookies, CSRF/Host, private paths, body limits and untrusted proxy headers', async (t) => {
+  const f = await fixture(t, { serverOnly: true, secureCookies: true }),
+    anonymous = f.client();
+  const registration = await anonymous('/api/auth/register', {
+    method: 'POST',
+    status: 201,
+    body: {
+      login: 'secure_customer',
+      password: 'test-password-2026',
+      name: 'Secure',
+      group: 'Test',
+    },
+  });
+  assert.match(
+    registration.headers.get('set-cookie'),
+    /__Host-okei.sid=.*HttpOnly; Secure; SameSite=Strict/,
+  );
+  for (const route of [
+    '/',
+    '/index.html?mode=demo',
+    '/%69ndex.html?mode=demo',
+    '//index.html?mode=demo',
+  ]) {
+    const r = await anonymous(route);
+    assert.match(await r.text(), /data-mode="server"/);
+    assert.match(r.headers.get('content-security-policy'), /script-src 'self'/);
+  }
+  await anonymous('/healthz');
+  for (const route of [
+    '/.env',
+    '/server/auth.cjs',
+    '/package.json',
+    '/var/okei/okei.sqlite',
+    '/backups/manifest.json',
+  ])
+    await anonymous(route, { status: 404 });
+  await anonymous('/api/profile', {
+    method: 'PATCH',
+    status: 403,
+    headers: { Origin: 'https://evil.example' },
+    body: { name: 'Changed', group: 'Test' },
+  });
+  await anonymous('/api/profile', {
+    method: 'PATCH',
+    status: 403,
+    headers: { Origin: '' },
+    body: { name: 'Changed', group: 'Test' },
+  });
+  const hostStatus = await new Promise((resolve, reject) => {
+    require('node:http')
+      .get(
+        f.api.app.locals.origin + '/api/orders',
+        { headers: { Host: 'evil.example' } },
+        (response) => {
+          response.resume();
+          resolve(response.statusCode);
+        },
+      )
+      .on('error', reject);
+  });
+  assert.equal(hostStatus, 403);
+  await anonymous('/api/profile', {
+    method: 'PATCH',
+    status: 413,
+    body: { name: 'x'.repeat(34000), group: 'Test' },
+  });
+  for (let i = 0; i < 11; i++)
+    await anonymous('/api/auth/login', {
+      method: 'POST',
+      status: i < 10 ? 401 : 429,
+      headers: { 'X-Forwarded-For': '192.0.2.' + (i + 1) },
+      body: { login: 'unknown_user', password: 'bad-password-2026' },
+    });
+  const sessions = require('../server/auth.cjs').createSessions(f.api.db);
+  const account = f.api.db.prepare('SELECT id FROM users WHERE login=?').get('secure_customer');
+  for (let i = 0; i < 12; i++) sessions.issue({ cookie() {} }, account);
+  assert.equal(
+    f.api.db.prepare('SELECT COUNT(*) n FROM sessions WHERE user_id=?').get(account.id).n,
+    10,
+  );
+  const link = path.join(f.directory, 'public-link');
+  await fs.symlink(path.join(__dirname, '../dist'), link, 'junction');
+  assert.throws(() => require('../server/db.cjs').openDatabase(link), /outside dist/);
+  const unsafe = path.join(f.directory, 'unsafe');
+  await fs.mkdir(unsafe);
+  await fs.symlink(path.join(__dirname, '../dist'), path.join(unsafe, 'pdf'), 'junction');
+  assert.throws(() => require('../server/db.cjs').openDatabase(unsafe), /must not be a symlink/);
 });
