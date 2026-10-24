@@ -38,10 +38,12 @@ const staff = serverMode
   ? createServerStaff({ api, ui: window.OkeiUI, notify })
   : createStaff({ window, document, storage: localStorage, indexedDB, ui: window.OkeiUI });
 let initialAccount = null;
+let initialPrices = null;
 let startupError = '';
 if (api) {
   api.prepare = (user) => (['staff', 'admin'].includes(user.role) ? staff : customer).load(user);
   try {
+    initialPrices = await api.request('/prices');
     initialAccount = await api.request('/auth/session');
     if (initialAccount) await api.prepare(initialAccount);
   } catch (error) {
@@ -59,6 +61,7 @@ const app = startApp({
   staff,
   api,
   initialAccount,
+  initialPrices,
 });
 window.initializeControls(helpers);
 if (startupError) app.toast('Сервер недоступен: ' + startupError);

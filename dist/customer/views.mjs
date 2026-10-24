@@ -330,14 +330,14 @@ export function createCustomerViews(state, { orderMath, ui, studio, pdfArtwork, 
       `<dl class="c-cost-lines">${
         q.singles
           ? `<div>` +
-            `<dt>${q.singles} одностор. × ${q.rateOne} ₽</dt>` +
+            `<dt>${q.singles} одностор. × ${money(q.rateOne)}</dt>` +
             `<dd>${money(q.singles * q.rateOne)}</dd>` +
             `</div>`
           : ''
       }${
         q.pairs
           ? `<div>` +
-            `<dt>${q.pairs} двустор. × ${q.rateTwo} ₽ <small>демотариф</small>` +
+            `<dt>${q.pairs} двустор. × ${money(q.rateTwo)} <small>демотариф</small>` +
             `</dt>` +
             `<dd>${money(q.pairs * q.rateTwo)}</dd>` +
             `</div>`
@@ -838,7 +838,7 @@ export function createCustomerViews(state, { orderMath, ui, studio, pdfArtwork, 
       `<option value="diploma" ${state.draft.binding === 'diploma' ? 'selected' : ''}>Диплом · 525 ₽</option>` +
       `</select>` +
       `</label>` +
-      `</div>${state.draft.binding === 'spiral' && q ? `<p class="c-hint">${q.sheetsPerCopy} ${plural(q.sheetsPerCopy, 'лист', 'листа', 'листов')} в каждой копии → ${q.bindingPerCopy} ₽ за брошюровку. До 50 листов — 100 ₽, больше — 150 ₽.</p>` : ''}`
+      `</div>${state.draft.binding === 'spiral' && q ? `<p class="c-hint">${q.sheetsPerCopy} ${plural(q.sheetsPerCopy, 'лист', 'листа', 'листов')} в каждой копии → ${money(q.bindingPerCopy)} за брошюровку. До 50 листов — 100 ₽, больше — 150 ₽.</p>` : ''}`
     );
   }
   function orderEvents(o) {

@@ -2,7 +2,7 @@
   let generation = 0,
     changes = 0,
     ordersRequest = null;
-  async function send(path, { method = 'GET', body, blob = false } = {}) {
+  async function send(path, { method = 'GET', body, blob = false, headers = {} } = {}) {
     const operation = generation;
     const multipart = body instanceof FormData;
     const response = await fetch('/api' + path, {
@@ -10,14 +10,21 @@
       credentials: 'same-origin',
       cache: 'no-store',
       signal: AbortSignal.timeout(60000),
-      headers: body !== undefined && !multipart ? { 'Content-Type': 'application/json' } : {},
+      headers: {
+        ...(body !== undefined && !multipart ? { 'Content-Type': 'application/json' } : {}),
+        ...headers,
+      },
       body: body === undefined ? undefined : multipart ? body : JSON.stringify(body),
     });
     const data = blob && response.ok ? await response.blob() : await response.json();
     if (operation !== generation) throw Error('Сессия изменилась. Операция отменена.');
     if (!response.ok) {
       if (response.status === 409) changes++;
-      throw Object.assign(Error(data.error || 'Ошибка запроса.'), { status: response.status });
+      throw Object.assign(Error(data.error || 'Ошибка запроса.'), {
+        status: response.status,
+        code: data.code,
+        price: data.price,
+      });
     }
     if (method !== 'GET') changes++;
     return data;

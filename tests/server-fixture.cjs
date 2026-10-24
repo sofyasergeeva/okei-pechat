@@ -30,6 +30,17 @@ const os = require('node:os');
     },
     'admin',
   );
+  const secondAdmin = await createUser(
+    api.db,
+    {
+      login: 'browser_admin_two',
+      password: 'browser-password-2026',
+      name: 'Второй администратор',
+      group: 'Типография',
+    },
+    'admin',
+  );
+  api.db.prepare('UPDATE users SET active=0 WHERE id=?').run(secondAdmin.id);
   const server = api.app.listen(18088, '127.0.0.1');
   for (const signal of ['SIGTERM', 'SIGINT'])
     process.on(signal, () => {

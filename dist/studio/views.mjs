@@ -1,4 +1,5 @@
 import { escapeHTML as esc } from '../shared.mjs';
+import { MERCH_PRICE } from '../customer/orders.mjs';
 import { colors } from './model.mjs';
 export function createStudioViews(state) {
   function view() {
@@ -83,13 +84,13 @@ export function createStudioViews(state) {
       `</div>` +
       `<div class="s-total">` +
       `<span>Футболка + принт</span>` +
-      `<b id="s-total">${(state.design.count * 950).toLocaleString('ru-RU')} ₽</b>` +
+      `<b id="s-total">${((state.design.count * (state.merchPriceKopecks ?? MERCH_PRICE * 100)) / 100).toLocaleString('ru-RU')} ₽</b>` +
       `</div>` +
       `<button class="btn primary s-order" data-s-order>Заказать свой принт <svg class="ui-icon ui-arrow" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">` +
       `<path d="M5 19 19 5M5 5h14v14"/>` +
       `</svg>` +
       `</button>` +
-      `<p class="c-hint s-price-note">950 ₽ / шт. — пример цены, печать с двух сторон включена. Ткань, цвет и итог подтвердит сотрудник. Оплата при получении.</p>` +
+      `<p class="c-hint s-price-note">${((state.merchPriceKopecks ?? MERCH_PRICE * 100) / 100).toLocaleString('ru-RU')} ₽ / шт. — предварительная цена, печать с двух сторон включена. Ткань, цвет и итог подтвердит сотрудник. Оплата при получении.</p>` +
       `</div>`
     );
   }
@@ -189,7 +190,7 @@ export function createStudioViews(state) {
       `<h2 id="s-review-title">Всё на своих местах?</h2>` +
       `<img src="${url}" alt="Макет передней и задней стороны футболки">` +
       `<p>${esc(snapshot.shirtColorName)} · ${snapshot.size} · ${snapshot.count} шт.</p>` +
-      `<strong>${(snapshot.count * 950).toLocaleString('ru-RU')} ₽ <small>предварительная стоимость</small>` +
+      `<strong><span id="s-review-total" data-count="${snapshot.count}">${((snapshot.count * (state.merchPriceKopecks ?? MERCH_PRICE * 100)) / 100).toLocaleString('ru-RU')} ₽</span> <small>предварительная стоимость</small>` +
       `</strong>` +
       `<p class="c-hint">Макет будет приложен к заказу. Наличие и итоговую цену подтвердит сотрудник.</p>` +
       `<button class="btn primary" id="s-confirm-order">Подтвердить заказ <svg class="ui-icon ui-arrow" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">` +

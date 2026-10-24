@@ -1,4 +1,5 @@
-﻿import { createStaffState, visible, createCSV } from './staff/orders.mjs';
+import { parsePrice, priceFields } from './pricing.mjs';
+import { createStaffState, visible, createCSV } from './staff/orders.mjs';
 import { createStaffViews } from './staff/views.mjs';
 import { downloadBlob } from './shared.mjs';
 import { openServerPDF, createOrderPolling, patchOrderRegions } from './api.mjs';
@@ -25,7 +26,7 @@ export function createServerStaff({ api, ui, notify }) {
   }
   const polling = createOrderPolling({
     document,
-    active: () => Boolean(state.user) && !pending && state.page !== 'personnel',
+    active: () => Boolean(state.user) && !pending && !['personnel', 'prices'].includes(state.page),
     onExpired: () => notify('Сессия завершена. Войди снова.'),
     update: async () => {
       const owner = state.user,
@@ -62,6 +63,7 @@ export function createServerStaff({ api, ui, notify }) {
   async function load(user) {
     await refresh();
     state.user = user;
+    if (user.role === 'admin') state.personnel = await api.request('/staff');
     polling.start();
   }
   function syncMobile() {
@@ -114,7 +116,13 @@ export function createServerStaff({ api, ui, notify }) {
       await action();
     } catch (error) {
       if (owner === state.user?.id) {
-        if (error.status === 409) await refresh().catch(() => {});
+        if (error.status === 409) {
+          await refresh().catch(() => {});
+          if (state.page === 'prices') {
+            state.prices = await api.request('/prices');
+            state.priceDraft = null;
+          }
+        }
         notify(error.message);
         if (state.personnelEditor)
           personnelFocus = state.personnelEditor.id ? 'w-personnel-name' : 'w-personnel-login';
@@ -134,7 +142,7 @@ export function createServerStaff({ api, ui, notify }) {
       body: { ...body, version: order.version },
     });
     state.confirm = '';
-    state.writing.delete(order.id);
+    if (suffix !== '/assignment') state.writing.delete(order.id);
     await refresh();
   }
   document.addEventListener('click', (event) => {
@@ -145,6 +153,14 @@ export function createServerStaff({ api, ui, notify }) {
     if (!Object.keys(d).some((key) => key.startsWith('w'))) return;
     event.preventDefault();
     run(async () => {
+      if (button.hasAttribute('data-w-claim')) return update('/assignment', { action: 'claim' });
+      if (button.hasAttribute('data-w-release'))
+        return update('/assignment', { action: 'release' });
+      if (button.hasAttribute('data-w-price-cancel')) {
+        state.prices = await api.request('/prices');
+        state.priceDraft = null;
+        return;
+      }
       if (button.hasAttribute('data-w-personnel-add') || d.wPersonnelEdit) {
         const target = state.personnel?.find((u) => u.id === d.wPersonnelEdit);
         state.personnelEditor = {
@@ -176,6 +192,11 @@ export function createServerStaff({ api, ui, notify }) {
       }
       if (d.wPage) {
         state.personnelEditor = null;
+        if (d.wPage === 'prices') {
+          if (state.user.role !== 'admin') return;
+          state.prices = await api.request('/prices');
+          state.priceDraft = null;
+        }
         if (d.wPage === 'personnel') {
           if (state.user.role !== 'admin') return;
           state.personnel = await api.request('/staff');
@@ -195,6 +216,7 @@ export function createServerStaff({ api, ui, notify }) {
         return;
       }
       if (d.wOrder) {
+        if (state.user.role === 'admin') state.personnel = await api.request('/staff');
         state.chosen = d.wOrder;
         state.detailTab = 'info';
         state.mobileOpen = true;
@@ -312,6 +334,12 @@ export function createServerStaff({ api, ui, notify }) {
       ['name', 'login', 'password'].includes(event.target.name)
     )
       state.personnelEditor[event.target.name] = event.target.value;
+    if (event.target.closest('#w-prices-form')) {
+      state.priceDraft ||= Object.fromEntries(
+        priceFields.map(([key]) => [key, (state.prices.values[key] / 100).toFixed(2)]),
+      );
+      state.priceDraft[event.target.name] = event.target.value;
+    }
     if (event.target.id === 'w-message')
       state.writing.set(state.chosen, {
         text: event.target.value,
@@ -336,6 +364,23 @@ export function createServerStaff({ api, ui, notify }) {
     const data = new FormData(event.target),
       id = event.target.id;
     run(async () => {
+      if (id === 'w-assignment-form')
+        await update('/assignment', {
+          action: 'assign',
+          assigneeId: String(data.get('assigneeId')),
+        });
+      if (id === 'w-prices-form') {
+        state.prices = await api.request('/prices', {
+          method: 'PATCH',
+          body: {
+            version: state.prices.version,
+            values: Object.fromEntries(
+              priceFields.map(([key]) => [key, parsePrice(String(data.get(key)))]),
+            ),
+          },
+        });
+        state.priceDraft = null;
+      }
       if (id.startsWith('w-personnel-')) {
         const target = event.target.dataset.personnelId;
         const body = { name: String(data.get('name') || '').trim() };
@@ -438,6 +483,8 @@ export function createServerStaff({ api, ui, notify }) {
       personnelFocus = '';
       state.personnelEditor = null;
       state.personnel = [];
+      state.prices = null;
+      state.priceDraft = null;
       document.body.classList.remove('w-panel-open');
     },
   };

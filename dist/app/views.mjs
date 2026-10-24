@@ -1,3 +1,4 @@
+import { formatMoney as money } from '../shared.mjs';
 export function createAppViews(state, { pdfArtwork }) {
   const pdf = pdfArtwork;
   const arrow =
@@ -22,7 +23,7 @@ export function createAppViews(state, { pdfArtwork }) {
       `<span class="check-bubble">✓</span>` +
       `</div>` +
       `<div class="price-float glass-card">` +
-      `<strong>от 4 ₽</strong>` +
+      `<strong>от ${state.prices ? money(state.prices.values.A4_mono_one / 100) : '4 ₽'}</strong>` +
       `<span>за односторонний<br>лист A4</span>` +
       `</div>` +
       `<div class="visual-index">` +
@@ -168,12 +169,27 @@ export function createAppViews(state, { pdfArtwork }) {
         `<span class="eyebrow">Прайс типографии</span>` +
         `<h2>Понятно, сколько стоит.</h2>` +
         `<p>Тарифы из предоставленного прайса. Итоговую стоимость подтверждает сотрудник.</p>${[
-          ['A4 · чёрно-белая печать', '4 ₽'],
-          ['A4 · цветная печать', '25 ₽'],
-          ['A3 · чёрно-белая печать', '10 ₽'],
-          ['A3 · цветная печать', '50 ₽'],
-          ['Брошюровка до 50 листов', '100 ₽'],
-          ['Переплёт диплома', '525 ₽'],
+          [
+            'A4 · чёрно-белая печать',
+            state.prices ? money(state.prices.values.A4_mono_one / 100) : '4 ₽',
+          ],
+          [
+            'A4 · цветная печать',
+            state.prices ? money(state.prices.values.A4_color_one / 100) : '25 ₽',
+          ],
+          [
+            'A3 · чёрно-белая печать',
+            state.prices ? money(state.prices.values.A3_mono_one / 100) : '10 ₽',
+          ],
+          [
+            'A3 · цветная печать',
+            state.prices ? money(state.prices.values.A3_color_one / 100) : '50 ₽',
+          ],
+          [
+            'Брошюровка до 50 листов',
+            state.prices ? money(state.prices.values.spiralSmall / 100) : '100 ₽',
+          ],
+          ['Переплёт диплома', state.prices ? money(state.prices.values.diploma / 100) : '525 ₽'],
         ]
           .map(
             ([l, r]) =>
@@ -200,7 +216,9 @@ export function createAppViews(state, { pdfArtwork }) {
         `<span class="eyebrow">Новый заказ</span>` +
         `<h2>${state.account ? 'Следующий шаг — PDF.' : 'Сначала войди.'}</h2>` +
         `<p>${state.account ? 'Загрузи PDF и настрой печать в своём кабинете.' : 'Чтобы файл и статус заказа сохранились в твоём кабинете, нужен аккаунт. Форма входа откроется на следующем экране.'}</p>${state.account ? '<button class="btn primary" data-workspace="print" style="text-decoration:none">Загрузить PDF <svg class="ui-icon ui-arrow" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19 19 5M5 5h14v14"/></svg></button>' : '<button class="btn primary" data-go="login">Войти и продолжить <svg class="ui-icon ui-arrow" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19 19 5M5 5h14v14"/></svg></button><button class="text-button" data-go="register">Создать аккаунт <svg class="ui-icon ui-arrow" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19 19 5M5 5h14v14"/></svg></button>'}`;
-    return html;
+    return state.prices && kind === 'services'
+      ? html.replace('От 100 ₽', 'От ' + money(state.prices.values.spiralSmall / 100))
+      : html;
   }
   return { home, auth, modalHTML };
 }

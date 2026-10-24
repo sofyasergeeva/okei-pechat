@@ -1,3 +1,4 @@
+import { MERCH_PRICE } from '../customer/orders.mjs';
 import { createId as uid } from '../shared.mjs';
 import { colors, fresh, confine } from './model.mjs';
 export function bindStudioActions(state, { document, controller }) {
@@ -139,7 +140,10 @@ export function bindStudioActions(state, { document, controller }) {
   }
   function editCount(el) {
     state.design.count = Number(el.value);
-    $('#s-total').textContent = (state.design.count * 950).toLocaleString('ru-RU') + ' ₽';
+    $('#s-total').textContent =
+      ((state.design.count * (state.merchPriceKopecks ?? MERCH_PRICE * 100)) / 100).toLocaleString(
+        'ru-RU',
+      ) + ' ₽';
     save();
   }
   function setRatioLock(el) {
@@ -160,7 +164,10 @@ export function bindStudioActions(state, { document, controller }) {
   function commitCount(el) {
     state.design.count = Math.min(30, Math.max(1, Math.round(Number(el.value) || 1)));
     el.value = state.design.count;
-    $('#s-total').textContent = (state.design.count * 950).toLocaleString('ru-RU') + ' ₽';
+    $('#s-total').textContent =
+      ((state.design.count * (state.merchPriceKopecks ?? MERCH_PRICE * 100)) / 100).toLocaleString(
+        'ru-RU',
+      ) + ' ₽';
     save();
   }
   document.addEventListener('click', (e) => {

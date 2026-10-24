@@ -1,3 +1,4 @@
+import { priceFields, priceText } from '../pricing.mjs';
 import { escapeHTML as E, formatMoney as rub, formatDate as stamp } from '../shared.mjs';
 import {
   fixtureKey,
@@ -19,7 +20,12 @@ export function createStaffViews(state, { ui, pdfArtwork, server = false }) {
         ['queue', 'Очередь', 'printer'],
         ['archive', 'История', 'orders'],
         ['groups', 'По группам', 'user'],
-        ...(server && state.user?.role === 'admin' ? [['personnel', 'Сотрудники', 'user']] : []),
+        ...(server && state.user?.role === 'admin'
+          ? [
+              ['personnel', 'Сотрудники', 'user'],
+              ['prices', 'Прайс', 'orders'],
+            ]
+          : []),
       ]
         .map(
           ([id, label, icon]) =>
@@ -69,6 +75,9 @@ export function createStaffViews(state, { ui, pdfArtwork, server = false }) {
       `<small>№${E(o.id)} · ${E(o.customer.group)}</small>` +
       `<b>${E(o.title)}</b>` +
       `<span>${o.kind === 'document' ? `${E(o.params.format)} · ${o.params.selectedPages || o.params.pages} стр. · ${o.params.copies} коп. · ${o.params.duplex ? '2 стороны' : '1 сторона'}` : `${E(o.params.size)} · ${o.params.copies} шт.`}</span>` +
+      (server
+        ? `<span class="w-order-owner">${o.assignedTo ? (o.assignedTo === state.user.id ? 'Ответственный: ты' : 'Ведёт: ' + E(o.assignee?.name || 'сотрудник')) : active(o) ? 'Свободен' : 'Без ответственного'}</span>`
+        : '') +
       `</span>` +
       `<span class="w-order-end">${badge(o)}<b>${rub(o.total)}</b>` +
       `</span>` +
@@ -133,6 +142,15 @@ export function createStaffViews(state, { ui, pdfArtwork, server = false }) {
     return `<dl class="w-params">${o.kind === 'document' ? param('Формат', p.format) + param('Цвет', p.color === 'color' ? 'Цветная' : 'Чёрно-белая') + param('Страницы', p.useRange ? p.range : (p.selectedPages || p.pages) + ' · все') + param('Стороны', p.duplex ? 'С двух сторон' : 'С одной стороны') + param('Копии', p.copies) + param('Листов', server && o.quote ? o.quote.sheets : Math.ceil((p.selectedPages || p.pages) / (p.duplex ? 2 : 1)) * p.copies) + param('Бумага', p.paper === 'photo' ? 'Фотобумага' : 'Обычная') + param('Переплёт', p.binding === 'spiral' ? 'Пружина' : p.binding === 'diploma' ? 'Дипломный' : 'Без переплёта') : param('Размер', p.size) + param('Количество', p.copies) + param('Цвет', p.shirtColorName || p.color || 'Молочный') + param('Макет', p.design === 'studio' ? 'Из конструктора' : p.design === 'classic' ? 'Логотип ОКЭИ' : 'Своя надпись')}</dl>`;
   }
   function actions(o) {
+    if (server && active(o) && o.assignedTo && o.assignedTo !== state.user.id)
+      return (
+        '<p class="w-assignment-note">Заказ ведёт ' +
+        E(o.assignee?.name || 'сотрудник') +
+        '.</p><button class="w-button w-outline" data-w-tab="chat">Переписка</button>'
+      );
+    if (server && active(o) && !o.assignedTo && ['work', 'ready'].includes(o.status))
+      return '<button class="w-button w-primary" data-w-claim>Взять в работу</button>';
+
     if (server && o.status === 'work' && !o.printingStartedAt)
       return (
         '<div class="w-action-block"><button class="w-button w-primary" data-w-start-printing>' +
@@ -199,7 +217,7 @@ export function createStaffViews(state, { ui, pdfArtwork, server = false }) {
         ? `<label class="w-check">` +
           `<input type="checkbox" data-w-checked ${state.checked.has(o._ref) ? 'checked' : ''}>Файл и параметры проверены</label>`
         : ''
-    }<button class="w-button w-primary" data-w-next="${next[0]}" ${['new', 'review'].includes(o.status) && !state.checked.has(o._ref) ? 'disabled' : ''}>${next[1]} ${I(next[0] === 'work' ? 'printer' : 'check')}</button>${
+    }<button class="w-button w-primary" data-w-next="${next[0]}" ${['new', 'review'].includes(o.status) && !state.checked.has(o._ref) ? 'disabled' : ''}>${server && next[0] === 'work' && !o.assignedTo ? 'Взять в работу' : next[1]} ${I(next[0] === 'work' ? 'printer' : 'check')}</button>${
       ['new', 'work', 'review'].includes(o.status)
         ? `<div class="w-secondary-actions">` +
           `<button class="w-text" data-w-tab="chat">Уточнить ${I('message')}</button>` +
@@ -233,7 +251,8 @@ export function createStaffViews(state, { ui, pdfArtwork, server = false }) {
           ? `<form id="w-chat-form">` +
             `<label class="w-label" for="w-message">Сообщение заказчику</label>` +
             `<textarea id="w-message" name="message" required maxlength="2000" rows="3" placeholder="Что нужно уточнить?">${E(state.writing.get(o._ref)?.text || '')}</textarea>${
-              ['new', 'work', 'review'].includes(o.status)
+              ['new', 'work', 'review'].includes(o.status) &&
+              (!server || !o.assignedTo || o.assignedTo === state.user.id)
                 ? `<label class="w-check">` +
                   `<input type="checkbox" name="pause" ${state.writing.get(o._ref)?.pause === false ? '' : 'checked'}>Приостановить до ответа</label>`
                 : ''
@@ -287,6 +306,41 @@ export function createStaffViews(state, { ui, pdfArtwork, server = false }) {
       );
     return `<div class="w-file-actions">${server && o.files?.length === 1 ? '<a class="w-text" href="/api/orders/' + o.id + '/file" download>Скачать PDF</a>' : ''}${o.kind === 'document' ? `<button class="w-button w-outline" data-w-file ${o.fileKey || o.sampleFile ? '' : 'disabled'}>${I('file')} ${o.fileKey || o.sampleFile ? 'Открыть PDF' : 'Нет исходного файла'}</button>` : o.previewKey || o.designKey ? `${o.previewKey ? '<button class="w-button w-outline" data-w-preview>Превью PNG</button>' : ''}${o.designKey ? '<button class="w-text" data-w-design>Исходный макет JSON</button>' : ''}` : ''}</div>`;
   }
+  function assignment(o) {
+    const owns = o.assignedTo === state.user.id;
+    return (
+      '<div class="w-assignment"><p>' +
+      (o.assignedTo
+        ? (owns ? 'Ответственный (ты) · ' : 'Ответственный · ') + E(o.assignee?.name || 'Сотрудник')
+        : active(o)
+          ? 'Свободный заказ'
+          : 'Ответственный не назначен') +
+      '</p>' +
+      (active(o) && owns && !o.printingStartedAt
+        ? '<button class="w-text" data-w-release>Освободить заказ</button>'
+        : '') +
+      (active(o) && state.user.role === 'admin'
+        ? '<form id="w-assignment-form"><label class="sr-only" for="w-assignee">Ответственный</label><select id="w-assignee" name="assigneeId" aria-label="Ответственный" required><option value="">Выбери сотрудника</option>' +
+          (state.personnel || [])
+            .filter((u) => u.active)
+            .map(
+              (u) =>
+                '<option value="' +
+                E(u.id) +
+                '" ' +
+                (o.assignedTo === u.id ? 'selected' : '') +
+                '>' +
+                E(u.name) +
+                ' · ' +
+                E(u.login) +
+                '</option>',
+            )
+            .join('') +
+          '</select><button class="w-button w-outline" type="submit">Назначить</button></form>'
+        : '') +
+      '</div>'
+    );
+  }
   function detail() {
     const o = selected();
     if (!o) return `<div class="w-empty">${I('file')}<h3>Нет выбранного заказа.</h3>` + `</div>`;
@@ -302,6 +356,7 @@ export function createStaffViews(state, { ui, pdfArtwork, server = false }) {
       `<p class="w-customer">${E(o.customer.name)} <b>${E(o.customer.group)}</b>` +
       `<span>${stamp(o.created)}</span>` +
       `</p>` +
+      (server ? assignment(o) : '') +
       `<div class="w-detail-tabs" role="tablist" aria-label="Детали заказа">` +
       `<button role="tab" data-w-tab="info" aria-selected="${state.detailTab === 'info'}">Параметры</button>` +
       `<button role="tab" data-w-tab="chat" aria-selected="${state.detailTab === 'chat'}">Переписка ${(o.messages || []).length ? `<small>${o.messages.length}</small>` : ''}</button>` +
@@ -411,6 +466,40 @@ export function createStaffViews(state, { ui, pdfArtwork, server = false }) {
       `</section>`
     );
   }
+  function prices() {
+    const groups = [...new Set(priceFields.map((f) => f[1]))];
+    return (
+      '<section class="w-prices"><header class="w-heading"><div><span class="w-kicker">ТИПОГРАФИЯ / ОКЭИ</span><h1>Прайс.</h1><p>Цены для новых заказов. Оформленные заказы сохраняют свою стоимость.</p></div></header>' +
+      '<form id="w-prices-form" class="w-personnel-form">' +
+      groups
+        .map(
+          (group) =>
+            '<fieldset><legend>' +
+            E(group) +
+            '</legend><div class="w-personnel-fields">' +
+            priceFields
+              .filter((f) => f[1] === group)
+              .map(
+                ([key, , label, unit]) =>
+                  '<label><span>' +
+                  E(label) +
+                  ' <small>' +
+                  E(unit) +
+                  '</small></span><input name="' +
+                  key +
+                  '" inputmode="decimal" type="text" required value="' +
+                  E(state.priceDraft?.[key] ?? priceText(state.prices.values[key])) +
+                  '" aria-label="' +
+                  E(group + ' · ' + label) +
+                  '"></label>',
+              )
+              .join('') +
+            '</div></fieldset>',
+        )
+        .join('') +
+      '<div class="w-personnel-actions"><button class="w-button w-primary" type="submit">Сохранить</button><button class="w-button w-outline" type="button" data-w-price-cancel>Отменить</button></div></form></section>'
+    );
+  }
   function personnel() {
     const users = state.personnel || [],
       editor = state.personnelEditor;
@@ -454,7 +543,7 @@ export function createStaffViews(state, { ui, pdfArtwork, server = false }) {
   }
   function render() {
     return (
-      `<div class="w-app">${nav()}<div class="w-content">${state.page === 'personnel' && server && state.user?.role === 'admin' ? personnel() : state.page === 'groups' ? groups() : queue()}</div>` +
+      `<div class="w-app">${nav()}<div class="w-content">${state.page === 'prices' && server && state.user?.role === 'admin' ? prices() : state.page === 'personnel' && server && state.user?.role === 'admin' ? personnel() : state.page === 'groups' ? groups() : queue()}</div>` +
       `<p class="w-demo-note">Демо-режим · заказы и сообщения доступны только в этом браузере.</p>` +
       `</div>`
     );

@@ -2,14 +2,23 @@
 import { calculateDocumentsQuote, filteredOrders } from './customer/orders.mjs';
 import { createCustomerViews } from './customer/views.mjs';
 import { openServerPDF, createOrderPolling, patchOrderRegions } from './api.mjs';
-import { plural } from './shared.mjs';
+import { quoteWithPrices } from './pricing.mjs';
+import { plural, formatMoney as money } from './shared.mjs';
 
 // Server PDF and merch orders reuse the existing templates and constructor.
 export function createServerCustomer({ api, ui, studio, notify }) {
   const state = createCustomerState();
   const $ = (selector, root = document) => root.querySelector(selector);
+  const math = {
+    selection: globalThis.OrderMath.selection,
+    quote: (d) => quoteWithPrices(globalThis.OrderMath, d, state.prices),
+  };
+  function setPrices(book) {
+    state.prices = book;
+    studio.setPrice(book.values.merch);
+  }
   const views = createCustomerViews(state, {
-    orderMath: globalThis.OrderMath,
+    orderMath: math,
     server: true,
     ui,
     studio,
@@ -34,7 +43,7 @@ export function createServerCustomer({ api, ui, studio, notify }) {
   }
   let pending = false;
   const current = () => state.user?.id;
-  const quote = () => calculateDocumentsQuote(state.draft, globalThis.OrderMath);
+  const quote = () => calculateDocumentsQuote(state.draft, math);
   function saveDraft() {
     try {
       localStorage.setItem('okei-api-draft-v1:' + current(), JSON.stringify(state.draft));
@@ -43,7 +52,8 @@ export function createServerCustomer({ api, ui, studio, notify }) {
     }
   }
   async function load(user) {
-    const orders = await api.request('/orders');
+    const [orders, prices] = await Promise.all([api.request('/orders'), api.request('/prices')]);
+    setPrices(prices);
     state.sessionId++;
     state.user = user;
     state.profile = { name: user.name, group: user.group };
@@ -67,6 +77,33 @@ export function createServerCustomer({ api, ui, studio, notify }) {
   }
   function serverText(html) {
     return html
+      .replaceAll('950 ₽', money(state.prices.values.merch / 100))
+      .replaceAll('от 4 ₽', 'от ' + money(state.prices.values.A4_mono_one / 100))
+      .replaceAll(
+        'Брошюровка · от 100 ₽',
+        'Брошюровка · от ' + money(state.prices.values.spiralSmall / 100),
+      )
+      .replaceAll('Диплом · 525 ₽', 'Диплом · ' + money(state.prices.values.diploma / 100))
+      .replaceAll(
+        'До 50 листов — 100 ₽, больше — 150 ₽.',
+        'До 50 листов — ' +
+          money(state.prices.values.spiralSmall / 100) +
+          ', больше — ' +
+          money(state.prices.values.spiralLarge / 100) +
+          '.',
+      )
+      .replaceAll(
+        'A4: ч/б 6 ₽, цвет 40 ₽ за двусторонний лист. A3: 16 ₽ и 80 ₽.',
+        'Двусторонний лист A4: ч/б ' +
+          money(state.prices.values.A4_mono_two / 100) +
+          ', цвет ' +
+          money(state.prices.values.A4_color_two / 100) +
+          '. A3: ' +
+          money(state.prices.values.A3_mono_two / 100) +
+          ' и ' +
+          money(state.prices.values.A3_color_two / 100) +
+          '.',
+      )
       .replaceAll('Демотарифы и расчёт', 'Предварительные тарифы и расчёт')
       .replaceAll('демотариф', 'предварительный тариф')
       .replaceAll(
@@ -177,6 +214,7 @@ export function createServerCustomer({ api, ui, studio, notify }) {
       await action();
     } catch (error) {
       if (current() === owner) {
+        if (error.code === 'PRICE_CHANGED') setPrices(error.price);
         state.uploadError = error.message;
         if (error.status === 409) {
           await refresh().catch(() => {});
@@ -290,6 +328,7 @@ export function createServerCustomer({ api, ui, studio, notify }) {
     draw();
     const order = await api.request('/orders', {
       method: 'POST',
+      headers: { 'X-Price-Version': String(state.prices.version) },
       body: {
         fileKeys: (state.draft.files || [{ id: state.draft.fileKey }]).map((file) => file.id),
         params: { ...state.draft },
@@ -618,13 +657,20 @@ export function createServerCustomer({ api, ui, studio, notify }) {
         body.set('preview', preview, 'preview.png');
         for (const [side, blob] of Object.entries(files))
           body.set(side, blob, 'print-' + side + '.png');
-        const order = await api.request('/orders', { method: 'POST', body });
+        const order = await api.request('/orders', {
+          method: 'POST',
+          body,
+          headers: { 'X-Price-Version': String(state.prices.version) },
+        });
         state.orders.unshift(order);
         state.page = 'overview';
         state.merchMode = 'collection';
         draw();
         success(order);
         return order.id;
+      } catch (error) {
+        if (error.code === 'PRICE_CHANGED') setPrices(error.price);
+        throw error;
       } finally {
         if (owner === current() && session === state.sessionId) pending = false;
       }

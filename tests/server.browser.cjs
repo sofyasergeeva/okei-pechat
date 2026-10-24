@@ -3,6 +3,8 @@ const { join } = require('node:path');
 const url = 'http://127.0.0.1:18088/?mode=server';
 async function login(page, login) {
   await page.goto(url);
+  await page.waitForFunction(() => typeof window.entryToast === 'function');
+  await expect(page.locator('#accountButton')).toContainText('Войти');
   await page.locator('#accountButton').click();
   await page.locator('#login').fill(login);
   await page.locator('#password').fill('browser-password-2026');
@@ -11,6 +13,8 @@ async function login(page, login) {
 }
 async function register(page, login) {
   await page.goto(url);
+  await page.waitForFunction(() => typeof window.entryToast === 'function');
+  await expect(page.locator('#accountButton')).toContainText('Войти');
   await page.locator('#accountButton').click();
   await page.locator('[data-go=register]').first().click();
   await page.locator('#name').fill('Тестовый заказчик');
@@ -18,7 +22,7 @@ async function register(page, login) {
   await page.locator('#login').fill(login);
   await page.locator('#password').fill('browser-password-2026');
   await page.locator('#passwordConfirm').fill('browser-password-2026');
-  await page.locator('#authForm button[type=submit]').click();
+  await page.locator('#authForm button[type=submit]').press('Enter');
   await expect(page.locator('body')).toHaveAttribute('data-screen', 'account');
 }
 async function prepare(page) {
@@ -40,6 +44,7 @@ test('Server: independent customer/staff contexts exchange PDF orders, statuses 
   for (const p of [page, operator]) p.on('pageerror', (e) => errors.push(e.message));
   try {
     await page.goto(url);
+    await page.waitForFunction(() => typeof window.entryToast === 'function');
     await page.evaluate(() =>
       localStorage.setItem('okei-customer-v1:student_23', 'legacy-sentinel'),
     );
@@ -62,6 +67,7 @@ test('Server: independent customer/staff contexts exchange PDF orders, statuses 
     await operator.locator('#w-chat-form button[type=submit]').click();
     await expect(operator.locator('.w-inspector')).toContainText('Ждём ответ');
     await page.reload();
+    await page.waitForFunction(() => typeof window.entryToast === 'function');
     await expect(page.locator('.c-live')).toContainText('Нужно уточнение');
     await page.locator('.c-live [data-c-order]').first().click();
     await expect(page.locator('#c-chat-log')).toContainText('Подтвердите параметры');
@@ -86,6 +92,7 @@ test('Server: independent customer/staff contexts exchange PDF orders, statuses 
     await operator.locator('#w-issue-form input[name=paid]').check();
     await operator.locator('#w-issue-form button[type=submit]').click();
     await page.reload();
+    await page.waitForFunction(() => typeof window.entryToast === 'function');
     await page.locator('.c-nav [data-c-page=orders]').click();
     await page.locator('[data-c-filter=completed]').click();
     await expect(page.locator('.c-order-row')).toHaveCount(1);
@@ -239,6 +246,7 @@ test('Server: multiple PDFs can be replaced, removed, downloaded and cancelled o
     await operator.locator('[data-w-next=work]').click();
     await expect(operator.locator('[data-w-start-printing]')).toBeVisible();
     await page.reload();
+    await page.waitForFunction(() => typeof window.entryToast === 'function');
     await page.locator('.c-live [data-c-order]').first().click();
     await page.locator('[data-c-cancel]').click();
     await page.locator('[data-c-confirm-cancel]').click();
@@ -255,6 +263,7 @@ test('Server: multiple PDFs can be replaced, removed, downloaded and cancelled o
     await operator.locator('[data-w-checked]').check();
     await operator.locator('[data-w-next=work]').click();
     await page.reload();
+    await page.waitForFunction(() => typeof window.entryToast === 'function');
     await page.locator('.c-live [data-c-order]').first().click();
     await page.locator('[data-c-cancel]').click();
     await operator.locator('[data-w-start-printing]').click();
@@ -262,6 +271,7 @@ test('Server: multiple PDFs can be replaced, removed, downloaded and cancelled o
     await page.locator('[data-c-confirm-cancel]').click();
     await expect(page.locator('#modal')).toBeHidden();
     await page.reload();
+    await page.waitForFunction(() => typeof window.entryToast === 'function');
     await page.locator('.c-live [data-c-order]').first().click();
     await expect(page.locator('.c-drawer')).toContainText('Печать начата:');
     await expect(page.locator('[data-c-cancel]')).toHaveCount(0);
@@ -462,6 +472,7 @@ test('Server: root forces server authentication and all resources work without e
     page.on('pageerror', (error) => errors.push(error.message));
     await page.route('https://**', (route) => route.abort());
     await page.goto('http://127.0.0.1:18088/?mode=demo');
+    await page.waitForFunction(() => typeof window.entryToast === 'function');
     await expect(page.locator('html')).toHaveAttribute('data-mode', 'server');
     await page.evaluate(() => document.fonts.ready);
     expect(await page.evaluate(() => document.fonts.check('650 16px Manrope'))).toBeTruthy();
@@ -557,6 +568,7 @@ test('Personnel: real logins, admin tab, add/rename/reset/disable, staff isolati
     await expect(form).toHaveCount(0);
     expect((await other.request.get('http://127.0.0.1:18088/api/orders')).status()).toBe(401);
     await employee.reload();
+    await employee.waitForFunction(() => typeof window.entryToast === 'function');
     await expect(employee.locator('body')).not.toHaveClass(/is-signedin/);
     await employee.locator('#accountButton').click();
     await expect(employee.locator('#authForm')).toBeVisible();
@@ -575,7 +587,7 @@ test('Personnel: real logins, admin tab, add/rename/reset/disable, staff isolati
     expect((await other.request.get('http://127.0.0.1:18088/api/orders')).status()).toBe(401);
     await page
       .locator('.w-personnel-row')
-      .filter({ hasText: 'browser_admin' })
+      .filter({ has: page.getByText('browser_admin', { exact: true }) })
       .locator('[data-w-personnel-edit]')
       .click();
     await expect(form.getByRole('button', { name: 'Отключить доступ' })).toBeDisabled();
@@ -624,6 +636,7 @@ test('Personnel: real logins, admin tab, add/rename/reset/disable, staff isolati
       session.login,
     );
     await page.reload();
+    await page.waitForFunction(() => typeof window.entryToast === 'function');
     await expect(page.locator('.customer-space')).toBeVisible();
     await page.locator('[data-c-page=profile]').click();
     await expect(page.locator('.c-profile-info').filter({ hasText: 'Логин' })).toContainText(
@@ -633,5 +646,218 @@ test('Personnel: real logins, admin tab, add/rename/reset/disable, staff isolati
   } finally {
     await context.close();
     await other.close();
+  }
+});
+
+async function savePrices(page) {
+  const response = page.waitForResponse(
+    (r) => r.url().endsWith('/api/prices') && r.request().method() === 'PATCH',
+  );
+  await page.locator('#w-prices-form button[type=submit]').click();
+  expect((await response).status()).toBe(200);
+}
+
+test('Prices: two administrators, stale PDF/merch confirmation, exact previews, themes and mobile', async ({
+  browser,
+}, info) => {
+  const contexts = await Promise.all([
+    browser.newContext(),
+    browser.newContext(),
+    browser.newContext(),
+  ]);
+  const [admin, second, customer] = await Promise.all(contexts.map((c) => c.newPage()));
+  let original, secondId;
+  try {
+    await login(admin, 'browser_admin');
+    const staff = await (await contexts[0].request.get('http://127.0.0.1:18088/api/staff')).json();
+    secondId = staff.find((u) => u.login === 'browser_admin_two').id;
+    const enable = await contexts[0].request.patch('http://127.0.0.1:18088/api/staff/' + secondId, {
+      data: { active: true },
+      headers: { Origin: 'http://127.0.0.1:18088' },
+    });
+    expect(enable.status()).toBe(200);
+    await login(second, 'browser_admin_two');
+    original = await (await contexts[0].request.get('http://127.0.0.1:18088/api/prices')).json();
+    for (const page of [admin, second]) await page.locator('[data-w-page=prices]').click();
+    await register(customer, 'priced_browser_' + Date.now());
+    await prepare(customer);
+    await admin.locator('[name=A4_mono_one]').fill('5,01');
+    await savePrices(admin);
+    await second.locator('[name=merch]').fill('999');
+    await second.locator('#w-prices-form button[type=submit]').click();
+    await expect(second.locator('#toast')).toContainText('Прайс изменился');
+    await expect(second.locator('[name=A4_mono_one]')).toHaveValue('5.01');
+    await expect(second.locator('[name=merch]')).toHaveValue('950.00');
+    await customer.locator('[data-c-next]').click();
+    await expect(customer.locator('.c-error')).toContainText('Цена изменилась');
+    await expect(customer.locator('.c-cost-card .c-total dd')).toHaveText('15,03 ₽');
+    await expect(customer.locator('#modal')).toBeHidden();
+    expect(
+      (await (await contexts[2].request.get('http://127.0.0.1:18088/api/orders')).json()).length,
+    ).toBe(0);
+    await customer.locator('[data-c-next]').click();
+    await expect(customer.locator('#modalContent h2')).toContainText('принят');
+    await customer.locator('#modal .close').click();
+    await customer.locator('[data-c-studio]').first().click();
+    await expect(customer.locator('#s-canvas')).toBeVisible();
+    await customer.locator('[data-s-order]').click();
+    await expect(customer.locator('#s-review-total')).toHaveText('950 ₽');
+    await admin.locator('[name=merch]').fill('1234,56');
+    await savePrices(admin);
+    await customer.locator('#s-confirm-order').click();
+    await expect(customer.locator('#s-confirm-order')).toHaveText('Подтвердить новую цену');
+    await expect(customer.locator('#s-review-total')).toHaveText('1 234,56 ₽', {
+      useInnerText: true,
+    });
+    expect(
+      (await (await contexts[2].request.get('http://127.0.0.1:18088/api/orders')).json()).length,
+    ).toBe(1);
+    await customer.locator('#s-confirm-order').click();
+    await expect(customer.locator('#modal')).toBeVisible();
+    await expect(customer.locator('#modalContent h2')).toContainText('принят');
+    const orders = await (
+      await contexts[2].request.get('http://127.0.0.1:18088/api/orders')
+    ).json();
+    expect(orders.map((o) => o.totalKopecks).sort((a, b) => a - b)).toEqual([1503, 123456]);
+    await customer.locator('#modal .close').click();
+    await customer.locator('[data-c-studio]').first().click();
+    await customer.locator('#s-count').fill('2');
+    await customer.locator('#s-count').press('Tab');
+    await expect(customer.locator('#s-total')).toHaveText('2 469,12 ₽');
+    await admin.locator('[name=A4_mono_one]').fill('7');
+    await admin.locator('[data-w-price-cancel]').click();
+    await expect(admin.locator('[name=A4_mono_one]')).toHaveValue('5.01');
+    for (const width of [1440, 390, 320])
+      for (const theme of ['sky', 'glass']) {
+        await admin.setViewportSize({ width, height: width === 1440 ? 1000 : 844 });
+        await admin.locator('[data-theme-choice=' + theme + ']').click();
+        expect(
+          await admin.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+        ).toBeTruthy();
+        await admin.screenshot({
+          path: info.outputPath('prices-' + width + '-' + theme + '.png'),
+          animations: 'disabled',
+        });
+      }
+  } finally {
+    if (original) {
+      const now = await (await contexts[0].request.get('http://127.0.0.1:18088/api/prices')).json();
+      expect(
+        (
+          await contexts[0].request.patch('http://127.0.0.1:18088/api/prices', {
+            data: { version: now.version, values: original.values },
+            headers: { Origin: 'http://127.0.0.1:18088' },
+          })
+        ).status(),
+      ).toBe(200);
+    }
+    if (secondId)
+      await contexts[0].request.patch('http://127.0.0.1:18088/api/staff/' + secondId, {
+        data: { active: false },
+        headers: { Origin: 'http://127.0.0.1:18088' },
+      });
+    await Promise.all(contexts.map((c) => c.close()));
+  }
+});
+
+test('Assignments: independent employee contexts race, polling, release and administrator reassignment preserve manufacture', async ({
+  browser,
+}, info) => {
+  const contexts = await Promise.all([
+    browser.newContext(),
+    browser.newContext(),
+    browser.newContext(),
+    browser.newContext(),
+  ]);
+  const [admin, a, b, customer] = await Promise.all(contexts.map((c) => c.newPage()));
+  try {
+    await login(admin, 'browser_admin');
+    const loginB = 'colleague_' + Date.now();
+    expect(
+      (
+        await contexts[0].request.post('http://127.0.0.1:18088/api/staff', {
+          data: { login: loginB, name: 'Второй сотрудник', password: 'browser-password-2026' },
+          headers: { Origin: 'http://127.0.0.1:18088' },
+        })
+      ).status(),
+    ).toBe(201);
+    await register(customer, 'assigned_' + Date.now());
+    await prepare(customer);
+    await customer.locator('[data-c-next]').click();
+    await expect(customer.locator('#modalContent h2')).toContainText('принят');
+    const id = (
+      await (await contexts[3].request.get('http://127.0.0.1:18088/api/orders')).json()
+    )[0].id;
+    await login(a, 'browser_operator');
+    await login(b, loginB);
+    for (const page of [a, b]) {
+      await page.locator('[data-w-order="' + id + '"]').click();
+      await page.locator('[data-w-checked]').check();
+    }
+    const responses = [a, b].map((page) =>
+      page.waitForResponse(
+        (r) => r.url().endsWith('/orders/' + id + '/status') && r.request().method() === 'PATCH',
+      ),
+    );
+    await Promise.all([a, b].map((page) => page.locator('[data-w-next=work]').click()));
+    const completed = await Promise.all(responses);
+    expect(completed.map((r) => r.status()).sort()).toEqual([200, 409]);
+    const winner = completed[0].status() === 200 ? a : b,
+      loser = winner === a ? b : a;
+    await expect(winner.locator('[data-w-start-printing]')).toBeVisible();
+    await expect(loser.locator('.w-assignment')).toContainText('Ответственный');
+    await expect(loser.locator('[data-w-start-printing]')).toHaveCount(0);
+    await winner.locator('.w-detail-tabs [data-w-tab=chat]').click();
+    await winner.locator('#w-message').fill('Набросок без отправки');
+    await winner.locator('[data-w-release]').click();
+    await expect(winner.locator('.w-assignment')).toContainText('Свободный заказ');
+    await expect(winner.locator('#w-message')).toHaveValue('Набросок без отправки');
+    await winner.locator('[data-w-tab=info]').click();
+    await loser.bringToFront();
+    await loser.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await expect(loser.locator('[data-w-claim]')).toBeVisible();
+    await loser.locator('[data-w-claim]').click();
+    await loser.locator('[data-w-start-printing]').click();
+    await expect(loser.locator('[data-w-release]')).toHaveCount(0);
+    let order = await (
+      await contexts[0].request.get('http://127.0.0.1:18088/api/orders/' + id)
+    ).json();
+    expect(order.printingStartedAt).toBeTruthy();
+    const started = order.printingStartedAt;
+    await admin.locator('[data-w-refresh]').click();
+    await admin.locator('[data-w-order="' + id + '"]').click();
+    const winnerContext = winner === a ? contexts[1] : contexts[2];
+    const user = await (
+      await winnerContext.request.get('http://127.0.0.1:18088/api/auth/session')
+    ).json();
+    await admin.getByRole('combobox', { name: 'Ответственный' }).click();
+    await admin.locator('.ui-select-menu [role=option][data-value="' + user.id + '"]').click();
+    await admin.locator('#w-assignment-form button[type=submit]').click();
+    await expect(admin.locator('#toast')).toContainText('Изменения сохранены');
+    await winner.bringToFront();
+    await winner.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await expect(winner.locator('[data-w-next=ready]')).toBeVisible();
+    await expect(winner.locator('[data-w-start-printing]')).toHaveCount(0);
+    order = await (await contexts[0].request.get('http://127.0.0.1:18088/api/orders/' + id)).json();
+    expect(order.printingStartedAt).toBe(started);
+    expect(order.assignedTo).toBe(user.id);
+    for (const theme of ['sky', 'glass']) {
+      await admin.locator('[data-theme-choice=' + theme + ']').click();
+      await admin.screenshot({
+        path: info.outputPath('assigned-' + theme + '.png'),
+        animations: 'disabled',
+      });
+    }
+    await admin.setViewportSize({ width: 390, height: 844 });
+    await expect(admin.locator('.w-inspector')).toHaveClass(/is-open/);
+    expect(
+      await admin.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBeTruthy();
+    await admin.screenshot({
+      path: info.outputPath('assigned-mobile.png'),
+      animations: 'disabled',
+    });
+  } finally {
+    await Promise.all(contexts.map((c) => c.close()));
   }
 });

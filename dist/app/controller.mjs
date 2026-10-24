@@ -10,11 +10,13 @@ export function startApp({
   staff,
   api,
   initialAccount = null,
+  initialPrices = null,
 }) {
   const state = {
     screen: 'home',
     theme: 'sky',
     account: initialAccount,
+    prices: initialPrices,
     toastTimer: undefined,
     modalTrigger: null,
     ephemeralAccount: null,
@@ -93,7 +95,15 @@ export function startApp({
     $('#toast').classList.add('show');
     state.toastTimer = setTimeout(() => $('#toast').classList.remove('show'), 4300);
   }
-  function openModal(kind) {
+  async function openModal(kind) {
+    if (api && ['prices', 'services'].includes(kind)) {
+      try {
+        state.prices = await api.request('/prices');
+      } catch (error) {
+        toast(error.message);
+        return;
+      }
+    }
     state.modalTrigger = document.activeElement;
     const html =
       api && kind === 'forgot'

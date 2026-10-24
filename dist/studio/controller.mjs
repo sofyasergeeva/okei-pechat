@@ -268,10 +268,13 @@ export function createStudio({ document, indexedDB, notify, placeOrder }) {
       try {
         await placeOrder(snapshot, blob);
         URL.revokeObjectURL(url);
-      } catch {
-        toast('Заказ не сохранился. Попробуй ещё раз.');
+      } catch (error) {
+        toast(
+          error.code === 'PRICE_CHANGED' ? error.message : 'Заказ не сохранился. Попробуй ещё раз.',
+        );
         b.disabled = false;
-        b.textContent = 'Подтвердить заказ';
+        b.textContent =
+          error.code === 'PRICE_CHANGED' ? 'Подтвердить новую цену' : 'Подтвердить заказ';
       } finally {
         state.saving = false;
       }
@@ -371,5 +374,19 @@ export function createStudio({ document, indexedDB, notify, placeOrder }) {
       toast,
     },
   });
-  return { view, mount, preset, loadDesign, productionFiles };
+  function setPrice(kopecks) {
+    state.merchPriceKopecks = kopecks;
+    if ($('#s-total'))
+      $('#s-total').textContent =
+        (((state.design?.count || 1) * kopecks) / 100).toLocaleString('ru-RU') + ' ₽';
+    const total = $('#s-review-total');
+    if (total)
+      total.textContent =
+        ((Number(total.dataset.count) * kopecks) / 100).toLocaleString('ru-RU') + ' ₽';
+    if ($('.s-price-note'))
+      $('.s-price-note').textContent =
+        (kopecks / 100).toLocaleString('ru-RU') +
+        ' ₽ / шт. — предварительная цена, печать с двух сторон включена. Ткань, цвет и итог подтвердит сотрудник. Оплата при получении.';
+  }
+  return { view, mount, preset, loadDesign, productionFiles, setPrice };
 }
