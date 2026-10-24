@@ -507,22 +507,54 @@ test('Personnel: real logins, admin tab, add/rename/reset/disable, staff isolati
     await page.locator('[data-w-page=personnel]').click();
     await expect(page.locator('.w-heading h1')).toHaveText('Сотрудники.');
     const loginName = 'edge_employee_' + Date.now();
-    const add = page.locator('#w-personnel-add');
-    await add.locator('[name=login]').fill(loginName);
-    await add.locator('[name=name]').fill('Новый сотрудник');
-    await add.locator('[name=password]').fill('browser-password-2026');
-    await add.getByRole('button', { name: 'Добавить сотрудника' }).click();
-    const row = page.locator('tbody tr').filter({ hasText: loginName });
+    const openAdd = page.locator('[data-w-personnel-add]');
+    const form = page.locator('.w-personnel-form');
+    await expect(form).toHaveCount(0);
+    await expect(page.locator('.w-personnel input')).toHaveCount(0);
+    await openAdd.focus();
+    await page.keyboard.press('Enter');
+    await expect(form.locator('[name=login]')).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(form.locator('[name=name]')).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(form.locator('[name=login]')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(form).toHaveCount(0);
+    await expect(openAdd).toBeFocused();
+    await page.keyboard.press('Enter');
+    await form.locator('[name=login]').fill('browser_operator');
+    await form.locator('[name=name]').fill('Новый сотрудник');
+    await form.locator('[name=password]').fill('browser-password-2026');
+    await form.getByRole('button', { name: 'Добавить сотрудника' }).click();
+    await expect(page.locator('#toast')).toContainText('Этот логин уже занят');
+    await expect(form.locator('[name=name]')).toHaveValue('Новый сотрудник');
+    await expect(form.locator('[name=password]')).toHaveValue('browser-password-2026');
+    await expect(form.locator('[name=login]')).toBeFocused();
+    await form.locator('[name=login]').fill(loginName);
+    await form.getByRole('button', { name: 'Добавить сотрудника' }).click();
+    const row = page.locator('.w-personnel-row').filter({ hasText: loginName });
+    const edit = row.locator('[data-w-personnel-edit]');
     await expect(row).toContainText('Активен');
-    await row.locator('[name=name]').fill('Изменённое имя');
-    await row.getByRole('button', { name: 'Сохранить', exact: true }).click();
-    await expect(row.locator('[name=name]')).toHaveValue('Изменённое имя');
+    await expect(form).toHaveCount(0);
+    await expect(edit).toBeFocused();
+    expect(await row.evaluate((el) => el.getBoundingClientRect().height)).toBeLessThan(95);
+    await page.keyboard.press('Enter');
+    await expect(form.locator('[name=name]')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(edit).toBeFocused();
+    await expect(form).toHaveCount(0);
+    await edit.click();
+    await form.locator('[name=name]').fill('Изменённое имя');
+    await form.getByRole('button', { name: 'Сохранить', exact: true }).click();
+    await expect(row).toContainText('Изменённое имя');
+    await expect(form).toHaveCount(0);
     await employee.locator('[data-action=logout]').click();
     await login(employee, loginName);
     await expect(employee.locator('.w-identity')).toContainText(loginName);
-    await row.locator('[name=password]').fill('edge-reset-password-2026');
-    await row.getByRole('button', { name: 'Сохранить', exact: true }).click();
-    await expect(row.locator('[name=password]')).toHaveValue('');
+    await edit.click();
+    await form.locator('[name=password]').fill('edge-reset-password-2026');
+    await form.getByRole('button', { name: 'Сохранить', exact: true }).click();
+    await expect(form).toHaveCount(0);
     expect((await other.request.get('http://127.0.0.1:18088/api/orders')).status()).toBe(401);
     await employee.reload();
     await expect(employee.locator('body')).not.toHaveClass(/is-signedin/);
@@ -532,32 +564,56 @@ test('Personnel: real logins, admin tab, add/rename/reset/disable, staff isolati
     await employee.locator('#password').fill('edge-reset-password-2026');
     await employee.locator('#authForm button[type=submit]').click();
     await expect(employee.locator('.w-app')).toBeVisible();
-    await row.getByRole('button', { name: 'Отключить доступ' }).click();
+    await edit.click();
+    await form.getByRole('button', { name: 'Отключить доступ' }).click();
     await expect(row).toContainText('Отключён');
+    await expect(edit).toBeFocused();
+    expect((await other.request.get('http://127.0.0.1:18088/api/orders')).status()).toBe(401);
+    await edit.click();
+    await form.getByRole('button', { name: 'Включить доступ' }).click();
+    await expect(row).toContainText('Активен');
     expect((await other.request.get('http://127.0.0.1:18088/api/orders')).status()).toBe(401);
     await page
-      .locator('tbody tr')
+      .locator('.w-personnel-row')
       .filter({ hasText: 'browser_admin' })
-      .getByRole('button', { name: 'Отключить доступ' })
+      .locator('[data-w-personnel-edit]')
       .click();
-    await expect(page.locator('#toast')).toContainText('последнего активного администратора');
-    for (const theme of ['sky', 'glass']) {
-      await page.locator('[data-theme-choice=' + theme + ']').click();
-      await expect(page.locator('body')).toHaveAttribute('data-theme', theme);
-      await page.screenshot({
-        path: info.outputPath('personnel-' + theme + '.png'),
-        animations: 'disabled',
-      });
+    await expect(form.getByRole('button', { name: 'Отключить доступ' })).toBeDisabled();
+    await expect(form).toContainText('Единственный активный администратор');
+    await page.keyboard.press('Escape');
+    for (const width of [1440, 390, 320]) {
+      await page.setViewportSize({ width, height: width === 1440 ? 1000 : 844 });
+      for (const theme of ['sky', 'glass']) {
+        await page.locator('[data-theme-choice=' + theme + ']').click();
+        await expect(page.locator('body')).toHaveAttribute('data-theme', theme);
+        await expect(page.locator('[data-w-page=personnel]')).toBeVisible();
+        expect(
+          await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+        ).toBeTruthy();
+        expect(
+          await page
+            .locator('.w-personnel-list')
+            .evaluate((el) => el.scrollWidth <= el.clientWidth),
+        ).toBeTruthy();
+        await page.screenshot({
+          path: info.outputPath('personnel-' + width + '-' + theme + '.png'),
+          animations: 'disabled',
+        });
+        await edit.click();
+        await expect(form.locator('[name=name]')).toBeFocused();
+        expect(await form.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy();
+        expect(
+          await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+        ).toBeTruthy();
+        await page.screenshot({
+          path: info.outputPath('personnel-editor-' + width + '-' + theme + '.png'),
+          animations: 'disabled',
+        });
+        await page.keyboard.press('Escape');
+        await expect(form).toHaveCount(0);
+        await expect(edit).toBeFocused();
+      }
     }
-    await page.setViewportSize({ width: 390, height: 844 });
-    await expect(page.locator('[data-w-page=personnel]')).toBeVisible();
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
-    ).toBeTruthy();
-    await page.screenshot({
-      path: info.outputPath('personnel-mobile.png'),
-      animations: 'disabled',
-    });
     await page.locator('[data-action=logout]').click();
     await register(page, 'profile_login_' + Date.now());
     await page.locator('[data-c-page=profile]').click();

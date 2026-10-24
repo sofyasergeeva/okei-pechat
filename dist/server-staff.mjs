@@ -12,6 +12,12 @@ export function createServerStaff({ api, ui, notify }) {
     pdfArtwork: () => $('#pdf').innerHTML,
   });
   let pending = false;
+  let personnelFocus = '';
+  function closePersonnel() {
+    const id = state.personnelEditor?.id;
+    state.personnelEditor = null;
+    personnelFocus = id ? 'w-personnel-edit-' + id : 'w-personnel-open';
+  }
   const selected = () => state.all.find((o) => o.id === state.chosen);
   function pick() {
     if (!visible(state).some((o) => o.id === state.chosen))
@@ -94,6 +100,10 @@ export function createServerStaff({ api, ui, notify }) {
     if (state.user && document.body.classList.contains('is-staff')) {
       $('#main').innerHTML = render();
       syncMobile();
+      if (personnelFocus) {
+        document.getElementById(personnelFocus)?.focus();
+        personnelFocus = '';
+      }
     }
   }
   async function run(action) {
@@ -106,6 +116,8 @@ export function createServerStaff({ api, ui, notify }) {
       if (owner === state.user?.id) {
         if (error.status === 409) await refresh().catch(() => {});
         notify(error.message);
+        if (state.personnelEditor)
+          personnelFocus = state.personnelEditor.id ? 'w-personnel-name' : 'w-personnel-login';
       }
     } finally {
       if (owner === state.user?.id) {
@@ -133,6 +145,21 @@ export function createServerStaff({ api, ui, notify }) {
     if (!Object.keys(d).some((key) => key.startsWith('w'))) return;
     event.preventDefault();
     run(async () => {
+      if (button.hasAttribute('data-w-personnel-add') || d.wPersonnelEdit) {
+        const target = state.personnel?.find((u) => u.id === d.wPersonnelEdit);
+        state.personnelEditor = {
+          id: target?.id || '',
+          login: target?.login || '',
+          name: target?.name || '',
+          password: '',
+        };
+        personnelFocus = target ? 'w-personnel-name' : 'w-personnel-login';
+        return;
+      }
+      if (button.hasAttribute('data-w-personnel-close')) {
+        closePersonnel();
+        return;
+      }
       if (d.wPersonnelToggle) {
         const target = state.personnel.find((u) => u.id === d.wPersonnelToggle);
         await api.request('/staff/' + target.id, {
@@ -144,9 +171,11 @@ export function createServerStaff({ api, ui, notify }) {
           return;
         }
         state.personnel = await api.request('/staff');
+        closePersonnel();
         return;
       }
       if (d.wPage) {
+        state.personnelEditor = null;
         if (d.wPage === 'personnel') {
           if (state.user.role !== 'admin') return;
           state.personnel = await api.request('/staff');
@@ -277,6 +306,12 @@ export function createServerStaff({ api, ui, notify }) {
   });
   document.addEventListener('input', (event) => {
     if (!state.user || !document.body.classList.contains('is-staff')) return;
+    if (
+      state.personnelEditor &&
+      event.target.closest('.w-personnel-form') &&
+      ['name', 'login', 'password'].includes(event.target.name)
+    )
+      state.personnelEditor[event.target.name] = event.target.value;
     if (event.target.id === 'w-message')
       state.writing.set(state.chosen, {
         text: event.target.value,
@@ -319,6 +354,12 @@ export function createServerStaff({ api, ui, notify }) {
           return;
         }
         state.personnel = await api.request('/staff');
+        if (!target)
+          personnelFocus =
+            'w-personnel-edit-' +
+            state.personnel.find((u) => u.login === body.login.toLowerCase()).id;
+        else personnelFocus = 'w-personnel-edit-' + target;
+        state.personnelEditor = null;
       }
       if (id === 'w-chat-form')
         await update('/messages', {
@@ -337,6 +378,12 @@ export function createServerStaff({ api, ui, notify }) {
   });
   document.addEventListener('keydown', (event) => {
     if (!state.user || !document.body.classList.contains('is-staff')) return;
+    if (event.key === 'Escape' && state.personnelEditor && !pending) {
+      event.preventDefault();
+      closePersonnel();
+      draw();
+      return;
+    }
     if (
       event.target.closest('.w-detail-tabs') &&
       ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)
@@ -388,6 +435,9 @@ export function createServerStaff({ api, ui, notify }) {
       polling.stop();
       Object.assign(state, createStaffState());
       pending = false;
+      personnelFocus = '';
+      state.personnelEditor = null;
+      state.personnel = [];
       document.body.classList.remove('w-panel-open');
     },
   };

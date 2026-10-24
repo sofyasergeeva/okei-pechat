@@ -412,30 +412,45 @@ export function createStaffViews(state, { ui, pdfArtwork, server = false }) {
     );
   }
   function personnel() {
-    const field = (name, label, type, value = '', required = name !== 'password') =>
-      `<label class="c-field"><span>${label}</span><input name="${name}" type="${type}" value="${E(value)}" ${required ? 'required' : ''} ${name === 'password' ? 'minlength="8" maxlength="256" autocomplete="new-password"' : 'maxlength="80"'}></label>`;
-    return `<header class="w-heading"><div><span class="w-kicker">ТИПОГРАФИЯ / ОКЭИ</span><h1>Сотрудники.</h1><p>Учётные записи и доступ к работе.</p></div></header>
-      <section class="w-report"><h2>Добавить сотрудника</h2>
-        <form id="w-personnel-add" class="c-form-card">
-          <label class="c-field"><span>Логин</span><input name="login" required pattern="[a-zA-Z0-9_.-]{3,30}" minlength="3" maxlength="30" autocomplete="off"></label>
-          ${field('name', 'Имя', 'text')}${field('password', 'Пароль', 'password', '', true)}
-          <button class="w-button w-primary" type="submit">Добавить сотрудника</button>
-        </form>
-      </section><section class="w-report"><h2>Доступ сотрудников</h2><div class="w-table-scroll"><table>
-        <thead><tr><th>Логин</th><th>Имя и пароль</th><th>Доступ</th></tr></thead><tbody>
-        ${(state.personnel || [])
-          .map(
-            (
-              u,
-            ) => `<tr><th scope="row">${E(u.login)}<p>${u.role === 'admin' ? 'Администратор' : 'Сотрудник'}</p></th>
-          <td><form id="w-personnel-${E(u.id)}" data-personnel-id="${E(u.id)}">
-            ${field('name', 'Имя', 'text', u.name)}${field('password', 'Новый пароль', 'password')}
-            <p class="w-report-note">Пароль меняется только при заполнении. Потребуется повторный вход.</p>
-            <button class="w-button w-outline" type="submit">Сохранить</button></form></td>
-          <td><p>${u.active ? 'Активен' : 'Отключён'}</p><button class="w-button w-outline" data-w-personnel-toggle="${E(u.id)}">${u.active ? 'Отключить доступ' : 'Включить доступ'}</button></td></tr>`,
-          )
-          .join('')}
-        </tbody></table></div></section>`;
+    const users = state.personnel || [],
+      editor = state.personnelEditor;
+    const target = editor?.id ? users.find((u) => u.id === editor.id) : null;
+    const lastAdmin =
+      target?.active &&
+      target.role === 'admin' &&
+      users.filter((u) => u.active && u.role === 'admin').length === 1;
+    const field = (name, label, type, required = true) =>
+      `<label><span>${label}</span><input id="w-personnel-${name}" name="${name}" type="${type}" value="${E(editor[name])}" ${required ? 'required' : ''} ${name === 'password' ? 'minlength="8" maxlength="256" autocomplete="new-password"' : name === 'login' ? 'pattern="[a-zA-Z0-9_.-]{3,30}" minlength="3" maxlength="30" autocomplete="off"' : 'maxlength="80" autocomplete="off"'}></label>`;
+    return `<section class="w-personnel" aria-label="Управление сотрудниками">
+      <header class="w-heading"><div><span class="w-kicker">ТИПОГРАФИЯ / ОКЭИ</span><h1>Сотрудники.</h1><p>Учётные записи и доступ к работе.</p></div>
+        <button id="w-personnel-open" class="w-button w-primary" data-w-personnel-add aria-expanded="${Boolean(editor && !editor.id)}">Добавить сотрудника</button>
+      </header>
+      ${
+        editor
+          ? `<form id="${target ? 'w-personnel-' + E(target.id) : 'w-personnel-add'}" class="w-personnel-form" ${target ? 'data-personnel-id="' + E(target.id) + '"' : ''} aria-labelledby="w-personnel-title">
+        <h2 id="w-personnel-title">${target ? 'Изменить сотрудника' : 'Новый сотрудник'}</h2>
+        ${target ? '<p class="w-personnel-help">' + E(target.login) + ' · ' + (target.role === 'admin' ? 'Администратор' : 'Сотрудник') + '</p>' : ''}
+        <div class="w-personnel-fields">${target ? '' : field('login', 'Логин', 'text')}${field('name', 'Имя', 'text')}${field('password', target ? 'Новый пароль' : 'Пароль', 'password', !target)}</div>
+        ${target ? '<p class="w-personnel-help">Оставь пароль пустым, чтобы сохранить текущий. После сброса потребуется повторный вход.</p>' : ''}
+        ${lastAdmin ? '<p class="w-personnel-help">Единственный активный администратор — отключение недоступно.</p>' : ''}
+        <div class="w-personnel-actions"><button class="w-button w-primary" type="submit">${target ? 'Сохранить' : 'Добавить сотрудника'}</button>
+          <button class="w-button w-outline" type="button" data-w-personnel-close>Отмена</button>
+          ${target ? `<button class="w-button w-outline" type="button" data-w-personnel-toggle="${E(target.id)}" ${lastAdmin ? 'disabled' : ''}>${target.active ? 'Отключить доступ' : 'Включить доступ'}</button>` : ''}
+        </div>
+      </form>`
+          : ''
+      }
+      <ul class="w-personnel-list" aria-label="Список сотрудников">${users
+        .map(
+          (u) => `<li class="w-personnel-row">
+        <div class="w-personnel-identity"><b>${E(u.name)}</b><span>${E(u.login)}</span></div>
+        <span class="w-personnel-role">${u.role === 'admin' ? 'Администратор' : 'Сотрудник'}</span>
+        <span class="w-personnel-status">${u.active ? 'Активен' : 'Отключён'}</span>
+        <button id="w-personnel-edit-${E(u.id)}" class="w-button w-outline" data-w-personnel-edit="${E(u.id)}" aria-label="Изменить: ${E(u.name)}" aria-expanded="${editor?.id === u.id}">Изменить</button>
+      </li>`,
+        )
+        .join('')}</ul>
+    </section>`;
   }
   function render() {
     return (

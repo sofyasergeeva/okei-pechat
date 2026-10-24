@@ -2155,3 +2155,161 @@ body[data-theme='sky'] .w-app {
     font-size: 11px;
   }
 }
+
+/* Personnel only: compact list and one optional editor. */
+.w-personnel .w-heading {
+  margin-bottom: 24px;
+  gap: 16px;
+}
+.w-personnel .w-heading > button {
+  margin: 0;
+  flex: none;
+}
+.w-personnel .w-button {
+  min-height: 40px;
+  padding: 10px 14px;
+  font-size: 12px;
+}
+.w-personnel-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border-top: 1px solid var(--line);
+}
+.w-personnel-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 0.5fr) minmax(85px, 0.3fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 15px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.w-personnel-identity {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.w-personnel-identity b {
+  font-weight: 650;
+  font-size: 14px;
+}
+.w-personnel-identity span,
+.w-personnel-role {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.w-personnel-status {
+  font-size: 11px;
+}
+.w-personnel-form {
+  padding: 20px;
+  margin-bottom: 24px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--w-card);
+  display: grid;
+  gap: 14px;
+}
+.w-personnel-form h2 {
+  font-size: 18px;
+  line-height: 1.4;
+  margin: 0;
+}
+.w-personnel-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.w-personnel-form[data-personnel-id] .w-personnel-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.w-personnel-fields label {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+  font-size: 12px;
+}
+.w-personnel-fields input {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid var(--field-edge);
+  border-radius: 8px;
+  background: var(--input);
+  color: var(--ink);
+  font: inherit;
+}
+.w-personnel-fields input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.w-personnel-help {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+.w-personnel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+@media (max-width: 800px) {
+  .w-personnel .w-heading {
+    flex-wrap: wrap;
+  }
+  .w-personnel-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 14px;
+  }
+  .w-personnel-identity {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .w-personnel-row > button {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .w-personnel-role {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .w-personnel-status {
+    grid-column: 2;
+    grid-row: 2;
+    text-align: right;
+  }
+  .w-personnel-fields,
+  .w-personnel-form[data-personnel-id] .w-personnel-fields {
+    grid-template-columns: 1fr;
+  }
+  .w-personnel-form {
+    padding: 16px;
+  }
+}
+
+@media (max-width: 630px) {
+  .w-app:has(.w-personnel) .w-nav {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 1.4fr) 30px;
+    gap: 2px;
+  }
+  .w-app:has(.w-personnel) .w-nav > button {
+    min-width: 0;
+    padding: 10px 2px;
+    font-size: 10px;
+  }
+  .w-app:has(.w-personnel) .w-nav > button span {
+    overflow-wrap: anywhere;
+  }
+  .w-app:has(.w-personnel) .w-identity {
+    min-width: 0;
+  }
+  .w-app:has(.w-personnel) .w-identity button {
+    width: 100%;
+  }
+}
