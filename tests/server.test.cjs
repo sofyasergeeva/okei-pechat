@@ -685,13 +685,13 @@ test('Migration v1/v2: existing single-PDF order, exact price, messages and file
   await f.restart();
   const migrated = await (await c('/api/orders/' + o.id)).json();
   assert.deepEqual(migrated, o);
-  assert.equal(f.api.db.pragma('user_version', { simple: true }), 3);
+  assert.equal(f.api.db.pragma('user_version', { simple: true }), 4);
   assert.equal(migrated.files.length, 1);
   f.api.db.exec(
     'ALTER TABLE orders DROP COLUMN kind; ALTER TABLE files DROP COLUMN kind; PRAGMA user_version=2;',
   );
   await f.restart();
-  assert.equal(f.api.db.pragma('user_version', { simple: true }), 3);
+  assert.equal(f.api.db.pragma('user_version', { simple: true }), 4);
   assert.deepEqual(await (await c('/api/orders/' + o.id)).json(), o);
   assert.deepEqual(f.api.db.pragma('foreign_key_check'), []);
   await c('/api/orders/' + o.id + '/file');
@@ -1177,4 +1177,292 @@ test('Production boundary: server-only entry, secure cookies, CSRF/Host, private
   await fs.mkdir(unsafe);
   await fs.symlink(path.join(__dirname, '../dist'), path.join(unsafe, 'pdf'), 'junction');
   assert.throws(() => require('../server/db.cjs').openDatabase(unsafe), /must not be a symlink/);
+});
+
+test('Personnel: admin-only management, validated changes, session revocation and last-admin protection', async (t) => {
+  const f = await fixture(t),
+    student = await f.register('personnel_student'),
+    staff = await operator(f);
+  const user = await createUser(
+    f.api.db,
+    {
+      login: 'personnel_admin',
+      password: 'test-password-2026',
+      name: 'Admin',
+      group: 'Типография',
+    },
+    'admin',
+  );
+  const admin = f.client();
+  await admin('/api/auth/login', {
+    method: 'POST',
+    body: { login: user.login, password: 'test-password-2026' },
+  });
+  for (const c of [student.c, staff]) {
+    await c('/api/staff', { status: 403 });
+    await c('/api/staff', {
+      method: 'POST',
+      status: 403,
+      body: { login: 'forbidden', name: 'X', password: 'test-password-2026' },
+    });
+    await c('/api/staff/' + user.id, { method: 'PATCH', status: 403, body: { active: false } });
+  }
+  await f.client()('/api/staff', { status: 401 });
+  await student.c('/api/auth/register', {
+    method: 'POST',
+    status: 400,
+    body: {
+      login: 'self_admin',
+      password: 'test-password-2026',
+      name: 'X',
+      group: 'X',
+      role: 'admin',
+    },
+  });
+  const list = await (await admin('/api/staff')).json();
+  assert.ok(list.every((u) => !('password_hash' in u) && !('password' in u)));
+  await admin('/api/staff', {
+    method: 'POST',
+    status: 400,
+    body: { login: 'escalated', name: 'X', password: 'test-password-2026', role: 'admin' },
+  });
+  const employee = await (
+    await admin('/api/staff', {
+      method: 'POST',
+      status: 201,
+      body: { login: 'new_operator', name: 'Employee', password: 'test-password-2026' },
+    })
+  ).json();
+  assert.equal(employee.role, 'staff');
+  assert.equal(employee.active, true);
+  const a = f.client(),
+    b = f.client();
+  for (const c of [a, b])
+    await c('/api/auth/login', {
+      method: 'POST',
+      body: { login: employee.login, password: 'test-password-2026' },
+    });
+  await admin('/api/staff/' + employee.id, {
+    method: 'PATCH',
+    status: 400,
+    body: { role: 'admin' },
+  });
+  await admin('/api/staff/' + employee.id, {
+    method: 'PATCH',
+    status: 400,
+    body: { active: 'false' },
+  });
+  await admin('/api/staff/' + employee.id, { method: 'PATCH', status: 400, body: { name: ' ' } });
+  await admin('/api/staff/' + employee.id, {
+    method: 'PATCH',
+    status: 400,
+    body: { password: 'short' },
+  });
+  await admin('/api/staff/' + student.user.id, {
+    method: 'PATCH',
+    status: 404,
+    body: { active: false },
+  });
+  const renamed = await (
+    await admin('/api/staff/' + employee.id, { method: 'PATCH', body: { name: 'Новое имя' } })
+  ).json();
+  assert.equal(renamed.name, 'Новое имя');
+  assert.equal((await (await a('/api/auth/session')).json()).name, 'Новое имя');
+  await admin('/api/staff/' + employee.id, {
+    method: 'PATCH',
+    body: { password: 'changed-password-2026' },
+  });
+  for (const c of [a, b]) {
+    assert.equal(await (await c('/api/auth/session')).json(), null);
+    await c('/api/orders', { status: 401 });
+  }
+  assert.equal(
+    f.api.db.prepare('SELECT count(*) n FROM sessions WHERE user_id=?').get(employee.id).n,
+    0,
+  );
+  await a('/api/auth/login', {
+    method: 'POST',
+    status: 401,
+    body: { login: employee.login, password: 'test-password-2026' },
+  });
+  await a('/api/auth/login', {
+    method: 'POST',
+    body: { login: employee.login, password: 'changed-password-2026' },
+  });
+  await admin('/api/staff/' + employee.id, { method: 'PATCH', body: { active: false } });
+  await a('/api/orders', { status: 401 });
+  await a('/api/auth/login', {
+    method: 'POST',
+    status: 401,
+    body: { login: employee.login, password: 'changed-password-2026' },
+  });
+  await admin('/api/staff/' + employee.id, { method: 'PATCH', body: { active: true } });
+  await a('/api/orders', { status: 401 });
+  await a('/api/auth/login', {
+    method: 'POST',
+    body: { login: employee.login, password: 'changed-password-2026' },
+  });
+  await admin('/api/staff/' + user.id, { method: 'PATCH', status: 409, body: { active: false } });
+  const file = await (await f.upload(student.c)).json();
+  let order = await newOrder(student.c, [file.id]);
+  assert.ok((await (await admin('/api/orders')).json()).some((o) => o.id === order.id));
+  order = await (
+    await admin('/api/orders/' + order.id + '/messages', {
+      method: 'POST',
+      body: { version: order.version, text: 'Administrator message', pause: true },
+    })
+  ).json();
+  assert.equal(order.messages.at(-1).author, 'staff');
+  assert.equal((await (await student.c('/api/orders/' + order.id)).json()).status, 'attention');
+  await admin('/api/orders/' + order.id + '/file');
+  const second = await createUser(
+    f.api.db,
+    { login: 'second_admin', password: 'test-password-2026', name: 'Second', group: 'Типография' },
+    'admin',
+  );
+  const secondSession = f.client();
+  await secondSession('/api/auth/login', {
+    method: 'POST',
+    body: { login: second.login, password: 'test-password-2026' },
+  });
+  await admin('/api/staff/' + second.id, { method: 'PATCH', body: { active: false } });
+  await secondSession('/api/staff', { status: 401 });
+  await admin('/api/staff/' + user.id, { method: 'PATCH', status: 409, body: { active: false } });
+});
+
+test('Migration v3 to v4: verified backup, unchanged identities, passwords, sessions, orders and messages; no automatic admins', async (t) => {
+  const f = await fixture(t),
+    { c } = await f.register('migration_customer');
+  await operator(f);
+  const file = await (await f.upload(c)).json();
+  let order = await newOrder(c, [file.id]);
+  order = await (
+    await c('/api/orders/' + order.id + '/messages', {
+      method: 'POST',
+      body: { version: order.version, text: 'Preserved message' },
+    })
+  ).json();
+  const db = f.api.db;
+  db.pragma('foreign_keys = OFF');
+  db.transaction(() =>
+    db.exec(
+      "CREATE TABLE users_v3(id TEXT PRIMARY KEY,login TEXT NOT NULL UNIQUE COLLATE NOCASE,password_hash TEXT NOT NULL,name TEXT NOT NULL,group_name TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('student','staff'))); INSERT INTO users_v3 SELECT id,login,password_hash,name,group_name,role FROM users; DROP TABLE users; ALTER TABLE users_v3 RENAME TO users; PRAGMA user_version=3;",
+    ),
+  )();
+  db.pragma('foreign_keys = ON');
+  const users = db.prepare('SELECT * FROM users ORDER BY id').all(),
+    sessions = db.prepare('SELECT * FROM sessions ORDER BY token_hash').all();
+  const backupRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'okei-migration-backup-'));
+  t.after(() => fs.rm(backupRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const { createBackup } = require('../server/backup.cjs');
+  const backup = await createBackup(f.directory, path.join(backupRoot, 'snapshot'));
+  const manifest = JSON.parse(await fs.readFile(path.join(backup, 'manifest.json'), 'utf8'));
+  const { createHash } = require('node:crypto');
+  assert.equal(
+    createHash('sha256')
+      .update(await fs.readFile(path.join(backup, 'okei.sqlite')))
+      .digest('hex'),
+    manifest.database,
+  );
+  await f.restart();
+  assert.deepEqual(
+    f.api.db
+      .prepare('SELECT id,login,password_hash,name,group_name,role FROM users ORDER BY id')
+      .all(),
+    users,
+  );
+  assert.deepEqual(f.api.db.prepare('SELECT * FROM sessions ORDER BY token_hash').all(), sessions);
+  assert.equal(
+    f.api.db.prepare("SELECT count(*) n FROM users WHERE role='admin' OR active<>1").get().n,
+    0,
+  );
+  assert.equal(f.api.db.pragma('user_version', { simple: true }), 4);
+  assert.deepEqual(f.api.db.pragma('foreign_key_check'), []);
+  assert.deepEqual(await (await c('/api/orders/' + order.id)).json(), order);
+  assert.deepEqual(
+    Buffer.from(await (await c('/api/orders/' + order.id + '/file')).arrayBuffer()),
+    await fs.readFile(path.join(__dirname, '../dist/assets/sample.pdf')),
+  );
+  await f.restart();
+  assert.deepEqual(await (await c('/api/orders/' + order.id)).json(), order);
+});
+
+test('Administrator CLI: explicit bootstrap uses DATA_DIR and never promotes an existing employee', async (t) => {
+  const f = await fixture(t);
+  await operator(f);
+  const { promisify } = require('node:util'),
+    exec = promisify(require('node:child_process').execFile);
+  const run = (login) =>
+    exec(process.execPath, [path.join(__dirname, '../server/manage.cjs'), 'admin'], {
+      env: {
+        ...process.env,
+        DATA_DIR: f.directory,
+        ADMIN_LOGIN: login,
+        ADMIN_PASSWORD: 'cli-password-2026',
+      },
+    });
+  const employee = f.api.db.prepare("SELECT * FROM users WHERE role='staff'").get();
+  await assert.rejects(run(employee.login));
+  assert.equal(
+    f.api.db.prepare('SELECT role FROM users WHERE id=?').get(employee.id).role,
+    'staff',
+  );
+  assert.match((await run('cli_administrator')).stdout, /Administrator account created/);
+  const admin = f.client();
+  const user = await (
+    await admin('/api/auth/login', {
+      method: 'POST',
+      body: { login: 'cli_administrator', password: 'cli-password-2026' },
+    })
+  ).json();
+  assert.equal(user.role, 'admin');
+  assert.equal(user.login, 'cli_administrator');
+  await admin('/api/staff');
+});
+
+test('Login: disabling or resetting a password during verification cannot issue a new session', async (t) => {
+  const f = await fixture(t),
+    auth = require('../server/auth.cjs');
+  const user = await createUser(
+    f.api.db,
+    { login: 'login_race', password: 'test-password-2026', name: 'Employee', group: 'Print' },
+    'staff',
+  );
+  const original = auth.verifyPassword;
+  t.after(() => {
+    auth.verifyPassword = original;
+  });
+  for (const reset of [false, true]) {
+    let arrived, release;
+    const started = new Promise((resolve) => {
+        arrived = resolve;
+      }),
+      gate = new Promise((resolve) => {
+        release = resolve;
+      });
+    f.api.db.prepare('UPDATE users SET active=1 WHERE id=?').run(user.id);
+    auth.verifyPassword = async (...args) => {
+      const valid = await original(...args);
+      arrived();
+      await gate;
+      return valid;
+    };
+    const response = f.client()('/api/auth/login', {
+      method: 'POST',
+      status: 401,
+      body: { login: user.login, password: 'test-password-2026' },
+    });
+    await started;
+    if (reset)
+      f.api.db
+        .prepare('UPDATE users SET password_hash=? WHERE id=?')
+        .run(await auth.passwordHash('reset-password-2026'), user.id);
+    else f.api.db.prepare('UPDATE users SET active=0 WHERE id=?').run(user.id);
+    release();
+    await response;
+    assert.equal(
+      f.api.db.prepare('SELECT count(*) n FROM sessions WHERE user_id=?').get(user.id).n,
+      0,
+    );
+  }
 });

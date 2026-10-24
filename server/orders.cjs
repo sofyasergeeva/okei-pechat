@@ -134,7 +134,7 @@ function orderView(db, row) {
 function accessibleOrder(db, user, id) {
   if (!/^\d+$/.test(String(id))) throw fail(404, 'Заказ не найден.');
   const row = db.prepare('SELECT * FROM orders WHERE id=?').get(id);
-  if (!row || (user.role !== 'staff' && row.owner_id !== user.id))
+  if (!row || (!['staff', 'admin'].includes(user.role) && row.owner_id !== user.id))
     throw fail(404, 'Заказ не найден.');
   return row;
 }
@@ -269,11 +269,11 @@ function modifyOrder(db, user, id, body, type) {
       db.prepare('INSERT INTO messages VALUES (?,?,?,?,?)').run(
         randomUUID(),
         id,
-        user.role === 'staff' ? 'staff' : 'user',
+        ['staff', 'admin'].includes(user.role) ? 'staff' : 'user',
         text,
         time,
       );
-      if (user.role === 'staff') {
+      if (['staff', 'admin'].includes(user.role)) {
         unread++;
         if (body.pause === true && ['new', 'work', 'review'].includes(status)) {
           resumeStatus = status;
@@ -281,7 +281,8 @@ function modifyOrder(db, user, id, body, type) {
         }
       } else if (status === 'attention') status = 'review';
     } else if (type === 'printing') {
-      if (user.role !== 'staff') throw fail(403, 'Начать печать может только сотрудник.');
+      if (!['staff', 'admin'].includes(user.role))
+        throw fail(403, 'Начать печать может только сотрудник.');
       if (status !== 'work' || printingStartedAt)
         throw fail(409, 'Печать уже началась или заказ не в работе.');
       printingStartedAt = time;
@@ -290,14 +291,14 @@ function modifyOrder(db, user, id, body, type) {
       if (next === 'cancelled') {
         if (printingStartedAt || !['new', 'work', 'attention', 'review'].includes(status))
           throw fail(409, 'После начала печати отмена недоступна.');
-        if (user.role === 'staff') {
+        if (['staff', 'admin'].includes(user.role)) {
           if (typeof body.reason !== 'string' || !body.reason.trim() || body.reason.length > 300)
             throw fail(400, 'Укажи причину отмены.');
           cancelReason = body.reason.trim();
         }
         status = 'cancelled';
         cancelledAt = time;
-      } else if (user.role !== 'staff') {
+      } else if (!['staff', 'admin'].includes(user.role)) {
         throw fail(403, 'Изменять статус может только сотрудник.');
       } else if (status === 'ready' && next === 'issued') {
         if (body.paid !== true) throw fail(400, 'Подтверди получение оплаты.');

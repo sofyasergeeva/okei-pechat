@@ -54,9 +54,9 @@ async function createUser(db, body, role = 'student', beforeInsert = () => {}) {
   };
   try {
     beforeInsert();
-    db.prepare('INSERT INTO users VALUES (@id,@login,@password_hash,@name,@group_name,@role)').run(
-      user,
-    );
+    db.prepare(
+      'INSERT INTO users(id,login,password_hash,name,group_name,role) VALUES (@id,@login,@password_hash,@name,@group_name,@role)',
+    ).run(user);
   } catch (error) {
     if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') throw fail(409, 'Этот логин уже занят.');
     throw error;
@@ -89,7 +89,7 @@ function createSessions(db, { secure = false, ttl = 12 * 60 * 60 * 1000 } = {}) 
     req.user = value
       ? db
           .prepare(
-            'SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE token_hash=? AND expires>?',
+            'SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE token_hash=? AND expires>? AND u.active=1',
           )
           .get(digest(value), Date.now())
       : null;

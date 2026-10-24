@@ -21,22 +21,25 @@ const { createUser } = require('./auth.cjs');
     }
     return;
   }
-  if (command !== 'staff') throw Error('Usage: node server/manage.cjs staff|backup|restore');
-  if (!process.env.STAFF_LOGIN || !process.env.STAFF_PASSWORD)
-    throw Error('Set STAFF_LOGIN and STAFF_PASSWORD in the private environment');
+  if (!['staff', 'admin'].includes(command))
+    throw Error('Usage: node server/manage.cjs staff|admin|backup|restore');
+  const prefix = command === 'admin' ? 'ADMIN' : 'STAFF';
+  if (!process.env[prefix + '_LOGIN'] || !process.env[prefix + '_PASSWORD'])
+    throw Error('Set ' + prefix + '_LOGIN and ' + prefix + '_PASSWORD in the private environment');
   const db = openDatabase(process.env.DATA_DIR || path.join(__dirname, '../var/okei'));
   try {
     await createUser(
       db,
       {
-        login: process.env.STAFF_LOGIN,
-        password: process.env.STAFF_PASSWORD,
-        name: process.env.STAFF_NAME || 'Сотрудник',
+        login: process.env[prefix + '_LOGIN'],
+        password: process.env[prefix + '_PASSWORD'],
+        name:
+          process.env[prefix + '_NAME'] || (command === 'admin' ? 'Администратор' : 'Сотрудник'),
         group: 'Типография',
       },
-      'staff',
+      command,
     );
-    console.log('Staff account created.');
+    console.log(command === 'admin' ? 'Administrator account created.' : 'Staff account created.');
   } finally {
     db.close();
   }

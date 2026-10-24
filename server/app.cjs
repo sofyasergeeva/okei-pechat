@@ -82,9 +82,11 @@ async function createApi({
       const { login, password } = auth.credentials(req.body),
         user = db.prepare('SELECT * FROM users WHERE login=?').get(login);
       const valid = await auth.verifyPassword(password, user?.password_hash || dummy);
-      if (!user || !valid) throw auth.fail(401, 'Логин или пароль не совпали.');
-      sessions.issue(res, user);
-      res.json(auth.publicUser(user));
+      const current = user && db.prepare('SELECT * FROM users WHERE id=?').get(user.id);
+      if (!valid || !current?.active || current.password_hash !== user.password_hash)
+        throw auth.fail(401, 'Логин или пароль не совпали.');
+      sessions.issue(res, current);
+      res.json(auth.publicUser(current));
     }),
   );
   app.get('/api/auth/session', (req, res) => res.json(req.user ? auth.publicUser(req.user) : null));
@@ -101,6 +103,90 @@ async function createApi({
     );
     res.json({ ...auth.publicUser(req.user), ...data });
   });
+  const administrator = (req, res, next) =>
+    req.user?.role === 'admin' ? next() : next(auth.fail(403, 'Доступно администратору.'));
+  const personnel = (user) => ({
+    id: user.id,
+    login: user.login,
+    name: user.name,
+    role: user.role,
+    active: Boolean(user.active),
+  });
+  const currentAdministrator = (id) => {
+    if (!db.prepare("SELECT id FROM users WHERE id=? AND role='admin' AND active=1").get(id))
+      throw auth.fail(403, 'Доступ администратора прекращён.');
+  };
+  app.get('/api/staff', required, administrator, (req, res) => {
+    res.json(
+      db
+        .prepare(
+          "SELECT id,login,name,role,active FROM users WHERE role IN ('staff','admin') ORDER BY login",
+        )
+        .all()
+        .map(personnel),
+    );
+  });
+  app.post(
+    '/api/staff',
+    required,
+    administrator,
+    asyncRoute(async (req, res) => {
+      if (Object.keys(req.body || {}).some((key) => !['login', 'password', 'name'].includes(key)))
+        throw auth.fail(400, 'Укажи только логин, имя и пароль сотрудника.');
+      const user = await auth.createUser(db, { ...req.body, group: 'Типография' }, 'staff', () => {
+        currentAdministrator(req.user.id);
+        limits.register();
+      });
+      res.status(201).json(personnel(db.prepare('SELECT * FROM users WHERE id=?').get(user.id)));
+    }),
+  );
+  app.patch(
+    '/api/staff/:id',
+    required,
+    administrator,
+    asyncRoute(async (req, res) => {
+      const body = req.body || {},
+        keys = Object.keys(body);
+      if (!keys.length || keys.some((key) => !['name', 'password', 'active'].includes(key)))
+        throw auth.fail(400, 'Можно изменить имя, пароль или доступ.');
+      if (
+        'name' in body &&
+        (typeof body.name !== 'string' || !body.name.trim() || body.name.trim().length > 80)
+      )
+        throw auth.fail(400, 'Укажи имя до 80 символов.');
+      if ('active' in body && typeof body.active !== 'boolean')
+        throw auth.fail(400, 'Проверь состояние доступа.');
+      let hash;
+      if ('password' in body) {
+        auth.credentials({ login: 'reset', password: body.password });
+        hash = await auth.passwordHash(body.password);
+      }
+      const result = db.transaction(() => {
+        currentAdministrator(req.user.id);
+        const user = db
+          .prepare("SELECT * FROM users WHERE id=? AND role IN ('staff','admin')")
+          .get(req.params.id);
+        if (!user) throw auth.fail(404, 'Сотрудник не найден.');
+        if (
+          body.active === false &&
+          user.active &&
+          user.role === 'admin' &&
+          db.prepare("SELECT count(*) n FROM users WHERE role='admin' AND active=1").get().n <= 1
+        )
+          throw auth.fail(409, 'Нельзя отключить последнего активного администратора.');
+        db.prepare('UPDATE users SET name=?,password_hash=?,active=? WHERE id=?').run(
+          body.name?.trim() ?? user.name,
+          hash ?? user.password_hash,
+          'active' in body ? Number(body.active) : user.active,
+          user.id,
+        );
+        if (hash || body.active === false)
+          db.prepare('DELETE FROM sessions WHERE user_id=?').run(user.id);
+        return personnel(db.prepare('SELECT * FROM users WHERE id=?').get(user.id));
+      })();
+      res.json(result);
+    }),
+  );
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 25 * 1024 * 1024, files: 10, fields: 0, parts: 10 },
@@ -219,18 +305,17 @@ async function createApi({
     const file = db.prepare('SELECT * FROM files WHERE id=?').get(req.params.id);
     if (
       !file ||
-      (req.user.role !== 'staff' && file.owner_id !== req.user.id) ||
-      (req.user.role === 'staff' &&
+      (!['staff', 'admin'].includes(req.user.role) && file.owner_id !== req.user.id) ||
+      (['staff', 'admin'].includes(req.user.role) &&
         !db.prepare('SELECT 1 FROM order_files WHERE file_id=?').get(file.id))
     )
       throw auth.fail(404, 'PDF не найден.');
     sendFile(req, res, file);
   });
   app.get('/api/orders', required, (req, res) => {
-    const rows =
-      req.user.role === 'staff'
-        ? db.prepare('SELECT * FROM orders ORDER BY id DESC').all()
-        : db.prepare('SELECT * FROM orders WHERE owner_id=? ORDER BY id DESC').all(req.user.id);
+    const rows = ['staff', 'admin'].includes(req.user.role)
+      ? db.prepare('SELECT * FROM orders ORDER BY id DESC').all()
+      : db.prepare('SELECT * FROM orders WHERE owner_id=? ORDER BY id DESC').all(req.user.id);
     res.json(rows.map((row) => orders.orderView(db, row)));
   });
   const uploadDesign = multer({

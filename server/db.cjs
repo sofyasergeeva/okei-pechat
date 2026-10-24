@@ -21,7 +21,7 @@ function openDatabase(dataDir) {
   db.pragma('foreign_keys = ON');
   db.pragma('busy_timeout = 5000');
   const version = db.pragma('user_version', { simple: true });
-  if (version > 3) {
+  if (version > 4) {
     db.close();
     throw Error('Unsupported database version');
   }
@@ -83,6 +83,28 @@ function openDatabase(dataDir) {
         db.exec('PRAGMA user_version=3;');
         if (db.pragma('foreign_key_check').length)
           throw Error('Database migration violates file ownership references');
+      })();
+    } catch (error) {
+      db.close();
+      throw error;
+    } finally {
+      if (db.open) db.pragma('foreign_keys = ON');
+    }
+  }
+  if (version < 4) {
+    db.pragma('foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        if (!db.pragma('table_info(users)').some((column) => column.name === 'active')) {
+          db.exec(
+            "CREATE TABLE users_v4(id TEXT PRIMARY KEY, login TEXT NOT NULL UNIQUE COLLATE NOCASE, password_hash TEXT NOT NULL, name TEXT NOT NULL, group_name TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('student','staff','admin')), active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)));" +
+              'INSERT INTO users_v4(id,login,password_hash,name,group_name,role) SELECT id,login,password_hash,name,group_name,role FROM users;' +
+              'DROP TABLE users; ALTER TABLE users_v4 RENAME TO users;',
+          );
+        }
+        if (db.pragma('foreign_key_check').length)
+          throw Error('Database migration violates user references');
+        db.pragma('user_version = 4');
       })();
     } catch (error) {
       db.close();

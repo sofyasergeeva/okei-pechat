@@ -9,6 +9,7 @@
     "test:regressions": "node --test tests/critical-regressions.cjs",
     "test:e2e": "playwright test",
     "start:server": "node --env-file-if-exists=.env server/index.cjs",
+    "setup:admin": "node --env-file-if-exists=.env server/manage.cjs admin",
     "setup:staff": "node --env-file-if-exists=.env server/manage.cjs staff",
     "test:server": "node --test tests/server.test.cjs",
     "lint": "eslint .",
