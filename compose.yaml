@@ -12,6 +12,8 @@ services:
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://127.0.0.1:8080}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       SERVER_ONLY: 'true'
+      DATA_DIR: /data/okei
+      BACKUP_DIR: /backups
       TRUST_PROXY: ${TRUST_PROXY:-}
       USER_STORAGE_MB: ${USER_STORAGE_MB:-256}
       TOTAL_STORAGE_MB: ${TOTAL_STORAGE_MB:-2048}

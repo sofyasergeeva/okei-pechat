@@ -151,8 +151,7 @@ PUBLIC_ORIGIN=https://<домен>, COOKIE_SECURE=true и доверенный �
 
 Восстановление контейнерной копии: останови приложение, затем выполни
 `docker compose run --rm -e DATA_DIR=/data/recovered app npm run restore -- /backups/<снимок>`.
-После успеха укажи DATA_DIR=/data/recovered в environment сервиса (в исходном compose он задаётся
-образом) и запусти контейнер. BACKUP_DIR=/backups остаётся отдельным volume.
+После успеха укажи DATA_DIR=/data/recovered в environment сервиса (в исходном compose указан /data/okei) и запусти контейнер. BACKUP_DIR=/backups остаётся отдельным volume.
 
 Дополнительно проверена чистая установка из Git-архива на Windows: npm ci --omit=dev,
 запуск сервера, реальные команды backup/restore, повторный запуск, два восстановленных заказа
@@ -288,3 +287,48 @@ Reduced repetition and card clutter: compact status filters, one order ledger, q
 Local logic improvements: message drafts and pause choices survive order/tab/filter refreshes during the current employee session and are cleared on sign-out. External changes flag the refresh action without silently replacing the visible order. Before any employee write, an order fingerprint is compared against current storage; a conflicting change aborts the action and reloads current data. This improves the local prototype only; it does not add production identity, remote delivery or cross-device consistency.
 
 Verified in browser: text and pause choice survive switching orders; two staff tabs on the same work order, one marks ready, the other's stale action is rejected with current ready status displayed; unpaid handover remains ready, paid handover becomes issued; agreed-clarification action disabled before its check; 3-page duplex, 2 copies shows four sheets / 20 RUB; desktop light/dark; 390px and 320px frames show no page overflow; at 320px the primary action fits within the 844px viewport (top761, bottom808); compact header alignment corrected. Previous customer modules checksum verification passed (11/11 unchanged). Native iOS Safari was not available.
+
+
+## Администратор и сотрудники
+
+Администратор работает в обычном кабинете сотрудника; только ему доступна вкладка «Сотрудники».
+Она позволяет добавить сотрудника, изменить имя, задать новый пароль, отключить и снова включить доступ.
+Сброс пароля и отключение завершают все сессии этой учётной записи. Последнего активного администратора отключить нельзя.
+Самостоятельная регистрация создаёт только заказчика; существующие сотрудники автоматически администраторами не становятся.
+Первый и дополнительные администраторы создаются только локальной служебной командой с новым логином.
+Совпадение с существующим логином завершает команду ошибкой и не меняет его роль.
+
+Для уже работающего Docker сначала сохраните резервную копию старым контейнером, затем обновите локальный образ:
+
+```powershell
+docker compose exec -T app npm run backup
+docker compose up -d --build
+```
+
+Схема SQLite автоматически обновляется с версии 3 до 4 при запуске; идентификаторы, хеши паролей,
+сессии, вложения, заказы и переписка сохраняются. Перед обновлением проверьте копию по инструкции резервирования.
+Compose явно задаёт DATA_DIR=/data/okei и BACKUP_DIR=/backups: нативные пути из .env не меняют пути внутри Docker.
+Не передавайте хостовый .env внутрь контейнера для запуска служебных команд.
+
+Создать администратора из PowerShell, не записывая пароль в командную строку или историю:
+
+```powershell
+$env:ADMIN_LOGIN = Read-Host 'Новый логин администратора'
+$env:ADMIN_NAME = Read-Host 'Имя администратора'
+$adminSecret = Read-Host 'Пароль (от 8 символов)' -AsSecureString
+$env:ADMIN_PASSWORD = [System.Net.NetworkCredential]::new('', $adminSecret).Password
+try {
+    docker compose exec -e ADMIN_LOGIN -e ADMIN_PASSWORD -e ADMIN_NAME app npm run setup:admin
+} finally {
+    Remove-Item Env:ADMIN_PASSWORD, Env:ADMIN_LOGIN, Env:ADMIN_NAME -ErrorAction SilentlyContinue
+    $adminSecret.Dispose()
+}
+```
+
+После успешного выполнения войдите под новым логином через обычную форму входа.
+Для нативного запуска те же ADMIN_LOGIN / ADMIN_PASSWORD / ADMIN_NAME передаются через окружение,
+а команда — npm run setup:admin; DATA_DIR должен совпадать с DATA_DIR запущенного приложения.
+Существующая npm run setup:staff сохранена и создаёт только сотрудника.
+
+Проверка этого этапа: npm test, npm run test:e2e (Microsoft Edge), npm run lint, npm run format.
+Тесты работают с отдельными временными базами и профилями браузера.
