@@ -140,18 +140,19 @@ export function createCustomer({
     state.loading = true;
     state.uploadError = '';
     draw();
-    let pdf;
+    let loadingTask;
     try {
       const pdfjs = await import('/assets/pdf.mjs');
       checkSession(operation);
       pdfjs.GlobalWorkerOptions.workerSrc = '/assets/pdf.worker.mjs';
       const data = await file.arrayBuffer();
       checkSession(operation);
-      pdf = await pdfjs.getDocument({ data }).promise;
+      loadingTask = pdfjs.getDocument({ data });
+      const pdf = await loadingTask.promise;
       checkSession(operation);
       const pages = pdf.numPages;
-      await pdf.destroy();
-      pdf = null;
+      await loadingTask.destroy();
+      loadingTask = null;
       checkSession(operation);
       if (pages > 2000) throw Error('Для прототипа выбери документ до 2000 страниц.');
       const k = 'pdf-' + uid();
@@ -175,7 +176,7 @@ export function createCustomer({
           : 'Не удалось прочитать PDF. Проверь файл и сними пароль, если он установлен.';
       }
     } finally {
-      if (pdf) await pdf.destroy().catch(() => {});
+      if (loadingTask) await loadingTask.destroy().catch(() => {});
       if (sessionCurrent(operation)) {
         state.loading = false;
         draw();

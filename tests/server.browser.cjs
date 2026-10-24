@@ -356,6 +356,7 @@ test('Server: merch production files and polling preserve customer/staff drafts 
     await operator.locator('[data-w-tab=chat]').first().click();
     await operator.locator('#w-message').fill('Уточнение по мерчу');
     await operator.locator('#w-chat-form button[type=submit]').click();
+    await expect(operator.locator('.w-messages')).toContainText('Уточнение по мерчу');
     await page.clock.fastForward(27000);
     await expect(page.locator('#c-chat-log')).toContainText('Уточнение по мерчу');
     await expect(page.locator('#c-message')).toHaveValue('Черновик заказчика');
@@ -377,6 +378,7 @@ test('Server: merch production files and polling preserve customer/staff drafts 
       window.__staffChatNode = node;
     });
     await page.locator('#c-chat-form button[type=submit]').click();
+    await expect(page.locator('#c-chat-log')).toContainText('Черновик заказчика');
     await operator.clock.fastForward(27000);
     await expect(operator.locator('.w-messages')).toContainText('Черновик заказчика');
     await expect(operator.locator('#w-message')).toHaveValue('Черновик сотрудника');
@@ -395,6 +397,7 @@ test('Server: merch production files and polling preserve customer/staff drafts 
     await operator.locator('[data-w-next=work]').click();
     await expect(operator.locator('[data-w-start-printing]')).toHaveText(/Начать изготовление/);
     await operator.locator('[data-w-start-printing]').click();
+    await expect(operator.locator('.w-inspector')).toContainText('Изготовление начато:');
     await page.clock.fastForward(27000);
     await page.locator('[data-c-drawer-tab=info]').click();
     await expect(page.locator('.c-drawer')).toContainText('Изготовление начато:');

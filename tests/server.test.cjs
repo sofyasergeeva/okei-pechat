@@ -1113,6 +1113,11 @@ test('Production boundary: server-only entry, secure cookies, CSRF/Host, private
     assert.match(r.headers.get('content-security-policy'), /script-src 'self'/);
   }
   await anonymous('/healthz');
+  await anonymous('/api/auth/login', {
+    method: 'POST',
+    status: 400,
+    body: { login: { toString: null, valueOf: null }, password: 'invalid-password' },
+  });
   for (const route of [
     '/.env',
     '/server/auth.cjs',

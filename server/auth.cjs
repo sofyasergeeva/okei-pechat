@@ -106,9 +106,7 @@ function createLoginLimiter() {
   const attempts = new Map();
   return (req, res, next) => {
     const now = Date.now(),
-      login = String(req.body?.login || '')
-        .toLowerCase()
-        .slice(0, 30);
+      login = typeof req.body?.login === 'string' ? req.body.login.toLowerCase().slice(0, 30) : '';
     for (const [key, bucket] of attempts) if (bucket.until <= now) attempts.delete(key);
     if (attempts.size > 10000) return next(fail(429, 'Повтори вход позже.'));
     for (const key of [req.ip, req.ip + ':' + login]) {

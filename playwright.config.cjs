@@ -16,7 +16,7 @@ module.exports = defineConfig({
     deviceScaleFactor: 1,
     locale: 'ru-RU',
     timezoneId: 'Asia/Yekaterinburg',
-    trace: 'retain-on-failure',
+    trace: { mode: 'retain-on-failure', screenshots: false, snapshots: true },
     screenshot: 'only-on-failure',
   },
   webServer: [
