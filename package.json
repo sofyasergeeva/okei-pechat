@@ -10,13 +10,18 @@
     "test:e2e": "playwright test",
     "start:server": "node --env-file-if-exists=.env server/index.cjs",
     "setup:staff": "node --env-file-if-exists=.env server/manage.cjs staff",
-    "test:server": "node --test tests/server.test.cjs"
+    "test:server": "node --test tests/server.test.cjs",
+    "lint": "eslint .",
+    "format": "prettier --check .",
+    "backup": "node --env-file-if-exists=.env server/manage.cjs backup",
+    "restore": "node --env-file-if-exists=.env server/manage.cjs restore"
   },
   "engines": {
     "node": ">=24"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
+    "eslint": "10.13.0",
     "prettier": "3.7.4"
   },
   "dependencies": {

@@ -1,0 +1,14 @@
+**
+!Dockerfile
+!package.json
+!package-lock.json
+!server/
+!server/**
+!dist/
+!dist/**
+
+**/.env*
+**/*.sqlite*
+**/*.db*
+**/*.key
+**/*.pem

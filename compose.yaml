@@ -1,0 +1,37 @@
+services:
+  app:
+    build: .
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 150s
+    ports:
+      - '127.0.0.1:8080:8080'
+    environment:
+      # Local HTTP smoke check only. Set production + HTTPS PUBLIC_ORIGIN for hosting.
+      NODE_ENV: ${NODE_ENV:-development}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://127.0.0.1:8080}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      SERVER_ONLY: 'true'
+      TRUST_PROXY: ${TRUST_PROXY:-}
+      USER_STORAGE_MB: ${USER_STORAGE_MB:-256}
+      TOTAL_STORAGE_MB: ${TOTAL_STORAGE_MB:-2048}
+      MAX_USER_ORDERS: ${MAX_USER_ORDERS:-200}
+      MAX_ORDERS: ${MAX_ORDERS:-2000}
+      MAX_USERS: ${MAX_USERS:-500}
+    volumes:
+      - data:/data
+      - backups:/backups
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 128
+
+volumes:
+  data:
+  backups:
