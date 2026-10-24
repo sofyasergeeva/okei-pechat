@@ -153,7 +153,9 @@ test('Server: failed order request preserves draft; merch joins the server queue
   await page.locator('.c-nav [data-c-page=orders]').click();
   await expect(page.locator('.c-order-row')).toHaveCount(2);
   await expect(page.locator('.c-order-row').filter({ hasText: 'Футболка' })).toHaveCount(1);
-  await expect(page.locator('.c-prototype-note')).toContainText('Серверный режим');
+  await expect(page.locator('.c-prototype-note')).toHaveText(
+    'Типография ОКЭИ · твои заказы под рукой.',
+  );
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.c-nav')).toBeVisible();
   expect(
@@ -484,5 +486,96 @@ test('Server: root forces server authentication and all resources work without e
     expect(errors).toEqual([]);
   } finally {
     await context.close();
+  }
+});
+
+test('Personnel: real logins, admin tab, add/rename/reset/disable, staff isolation and mobile themes', async ({
+  browser,
+}, info) => {
+  const context = await browser.newContext(),
+    other = await browser.newContext();
+  try {
+    const page = await context.newPage(),
+      employee = await other.newPage(),
+      errors = [];
+    for (const p of [page, employee]) p.on('pageerror', (e) => errors.push(e.message));
+    await login(employee, 'browser_operator');
+    await expect(employee.locator('.w-identity')).toContainText('browser_operator');
+    await expect(employee.locator('[data-w-page=personnel]')).toHaveCount(0);
+    expect((await other.request.get('http://127.0.0.1:18088/api/staff')).status()).toBe(403);
+    await login(page, 'browser_admin');
+    await page.locator('[data-w-page=personnel]').click();
+    await expect(page.locator('.w-heading h1')).toHaveText('Сотрудники.');
+    const loginName = 'edge_employee_' + Date.now();
+    const add = page.locator('#w-personnel-add');
+    await add.locator('[name=login]').fill(loginName);
+    await add.locator('[name=name]').fill('Новый сотрудник');
+    await add.locator('[name=password]').fill('browser-password-2026');
+    await add.getByRole('button', { name: 'Добавить сотрудника' }).click();
+    const row = page.locator('tbody tr').filter({ hasText: loginName });
+    await expect(row).toContainText('Активен');
+    await row.locator('[name=name]').fill('Изменённое имя');
+    await row.getByRole('button', { name: 'Сохранить', exact: true }).click();
+    await expect(row.locator('[name=name]')).toHaveValue('Изменённое имя');
+    await employee.locator('[data-action=logout]').click();
+    await login(employee, loginName);
+    await expect(employee.locator('.w-identity')).toContainText(loginName);
+    await row.locator('[name=password]').fill('edge-reset-password-2026');
+    await row.getByRole('button', { name: 'Сохранить', exact: true }).click();
+    await expect(row.locator('[name=password]')).toHaveValue('');
+    expect((await other.request.get('http://127.0.0.1:18088/api/orders')).status()).toBe(401);
+    await employee.reload();
+    await expect(employee.locator('body')).not.toHaveClass(/is-signedin/);
+    await employee.locator('#accountButton').click();
+    await expect(employee.locator('#authForm')).toBeVisible();
+    await employee.locator('#login').fill(loginName);
+    await employee.locator('#password').fill('edge-reset-password-2026');
+    await employee.locator('#authForm button[type=submit]').click();
+    await expect(employee.locator('.w-app')).toBeVisible();
+    await row.getByRole('button', { name: 'Отключить доступ' }).click();
+    await expect(row).toContainText('Отключён');
+    expect((await other.request.get('http://127.0.0.1:18088/api/orders')).status()).toBe(401);
+    await page
+      .locator('tbody tr')
+      .filter({ hasText: 'browser_admin' })
+      .getByRole('button', { name: 'Отключить доступ' })
+      .click();
+    await expect(page.locator('#toast')).toContainText('последнего активного администратора');
+    for (const theme of ['sky', 'glass']) {
+      await page.locator('[data-theme-choice=' + theme + ']').click();
+      await expect(page.locator('body')).toHaveAttribute('data-theme', theme);
+      await page.screenshot({
+        path: info.outputPath('personnel-' + theme + '.png'),
+        animations: 'disabled',
+      });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator('[data-w-page=personnel]')).toBeVisible();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBeTruthy();
+    await page.screenshot({
+      path: info.outputPath('personnel-mobile.png'),
+      animations: 'disabled',
+    });
+    await page.locator('[data-action=logout]').click();
+    await register(page, 'profile_login_' + Date.now());
+    await page.locator('[data-c-page=profile]').click();
+    const session = await (
+      await context.request.get('http://127.0.0.1:18088/api/auth/session')
+    ).json();
+    await expect(page.locator('.c-profile-info').filter({ hasText: 'Логин' })).toContainText(
+      session.login,
+    );
+    await page.reload();
+    await expect(page.locator('.customer-space')).toBeVisible();
+    await page.locator('[data-c-page=profile]').click();
+    await expect(page.locator('.c-profile-info').filter({ hasText: 'Логин' })).toContainText(
+      session.login,
+    );
+    expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+    await other.close();
   }
 });

@@ -180,11 +180,9 @@ export function createAuthForms(state, { document, storage, reduced, go, toast, 
       const demo = $('.demo-box');
       if (demo)
         demo.innerHTML =
-          '<summary>Серверный режим</summary><div class="demo-caption">Создай аккаунт заказчика. Учётную запись сотрудника создаёт администратор сервера.</div>';
+          '<summary>Доступ к кабинету</summary><div class="demo-caption">Создай аккаунт заказчика. Для доступа сотрудника обратись к администратору.</div>';
       const terms = $('.terms');
-      if (terms)
-        terms.textContent =
-          'Аккаунт сохраняется на сервере. Для учебной проверки используй тестовые данные.';
+      if (terms) terms.textContent = 'Используй учебные данные при знакомстве с сервисом.';
     }
     if (state.screen === 'login') {
       try {
@@ -211,6 +209,7 @@ export function createAuthForms(state, { document, storage, reduced, go, toast, 
         state.busy = false;
         state.account = {
           id: found.id || found.login || $('#login').value.trim().toLowerCase(),
+          login: found.login || $('#login').value.trim().toLowerCase(),
           name: found.name,
           group: found.group,
           role: found.role,
@@ -218,7 +217,7 @@ export function createAuthForms(state, { document, storage, reduced, go, toast, 
         if (registered)
           toast(
             api
-              ? 'Аккаунт сохранён на сервере.'
+              ? 'Аккаунт создан.'
               : 'Тестовый аккаунт создан. Он действует только в этой вкладке.',
           );
         go('account');

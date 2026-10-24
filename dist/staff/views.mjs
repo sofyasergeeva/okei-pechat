@@ -19,6 +19,7 @@ export function createStaffViews(state, { ui, pdfArtwork, server = false }) {
         ['queue', 'Очередь', 'printer'],
         ['archive', 'История', 'orders'],
         ['groups', 'По группам', 'user'],
+        ...(server && state.user?.role === 'admin' ? [['personnel', 'Сотрудники', 'user']] : []),
       ]
         .map(
           ([id, label, icon]) =>
@@ -29,7 +30,7 @@ export function createStaffViews(state, { ui, pdfArtwork, server = false }) {
       `<div class="w-sculpture">${pdfArtwork()}</div>` +
       `</div>` +
       `<div class="w-identity">` +
-      `<span>${I('user')} Сотрудник типографии</span>` +
+      `<span>${I('user')} ${server ? E(state.user?.login || state.user?.id || '') : 'Сотрудник типографии'}</span>` +
       `<button data-action="logout">Выйти ${I('arrow')}</button>` +
       `</div>` +
       `</nav>`
@@ -410,9 +411,35 @@ export function createStaffViews(state, { ui, pdfArtwork, server = false }) {
       `</section>`
     );
   }
+  function personnel() {
+    const field = (name, label, type, value = '', required = name !== 'password') =>
+      `<label class="c-field"><span>${label}</span><input name="${name}" type="${type}" value="${E(value)}" ${required ? 'required' : ''} ${name === 'password' ? 'minlength="8" maxlength="256" autocomplete="new-password"' : 'maxlength="80"'}></label>`;
+    return `<header class="w-heading"><div><span class="w-kicker">ТИПОГРАФИЯ / ОКЭИ</span><h1>Сотрудники.</h1><p>Учётные записи и доступ к работе.</p></div></header>
+      <section class="w-report"><h2>Добавить сотрудника</h2>
+        <form id="w-personnel-add" class="c-form-card">
+          <label class="c-field"><span>Логин</span><input name="login" required pattern="[a-zA-Z0-9_.-]{3,30}" minlength="3" maxlength="30" autocomplete="off"></label>
+          ${field('name', 'Имя', 'text')}${field('password', 'Пароль', 'password', '', true)}
+          <button class="w-button w-primary" type="submit">Добавить сотрудника</button>
+        </form>
+      </section><section class="w-report"><h2>Доступ сотрудников</h2><div class="w-table-scroll"><table>
+        <thead><tr><th>Логин</th><th>Имя и пароль</th><th>Доступ</th></tr></thead><tbody>
+        ${(state.personnel || [])
+          .map(
+            (
+              u,
+            ) => `<tr><th scope="row">${E(u.login)}<p>${u.role === 'admin' ? 'Администратор' : 'Сотрудник'}</p></th>
+          <td><form id="w-personnel-${E(u.id)}" data-personnel-id="${E(u.id)}">
+            ${field('name', 'Имя', 'text', u.name)}${field('password', 'Новый пароль', 'password')}
+            <p class="w-report-note">Пароль меняется только при заполнении. Потребуется повторный вход.</p>
+            <button class="w-button w-outline" type="submit">Сохранить</button></form></td>
+          <td><p>${u.active ? 'Активен' : 'Отключён'}</p><button class="w-button w-outline" data-w-personnel-toggle="${E(u.id)}">${u.active ? 'Отключить доступ' : 'Включить доступ'}</button></td></tr>`,
+          )
+          .join('')}
+        </tbody></table></div></section>`;
+  }
   function render() {
     return (
-      `<div class="w-app">${nav()}<div class="w-content">${state.page === 'groups' ? groups() : queue()}</div>` +
+      `<div class="w-app">${nav()}<div class="w-content">${state.page === 'personnel' && server && state.user?.role === 'admin' ? personnel() : state.page === 'groups' ? groups() : queue()}</div>` +
       `<p class="w-demo-note">Демо-режим · заказы и сообщения доступны только в этом браузере.</p>` +
       `</div>`
     );

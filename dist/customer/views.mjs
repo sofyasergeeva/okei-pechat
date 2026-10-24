@@ -553,7 +553,7 @@ export function createCustomerViews(state, { orderMath, ui, studio, pdfArtwork, 
       `<p class="c-hint">Светлая или тёмная тема переключается в правом верхнем углу и запоминается.</p>` +
       `<div class="c-profile-info">` +
       `<span>Логин</span>` +
-      `<b>${esc(state.user.id)}</b>` +
+      `<b>${esc(state.user.login || state.user.id)}</b>` +
       `</div>` +
       `<div class="c-profile-info">` +
       `<span>Роль</span>` +

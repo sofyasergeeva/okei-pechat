@@ -19,7 +19,7 @@ export function createServerStaff({ api, ui, notify }) {
   }
   const polling = createOrderPolling({
     document,
-    active: () => Boolean(state.user) && !pending,
+    active: () => Boolean(state.user) && !pending && state.page !== 'personnel',
     onExpired: () => notify('Сессия завершена. Войди снова.'),
     update: async () => {
       const owner = state.user,
@@ -82,12 +82,13 @@ export function createServerStaff({ api, ui, notify }) {
     queueMicrotask(syncMobile);
     return views
       .render()
+      .replaceAll('Демотариф.', 'Предварительный тариф.')
       .replace(
         'Демо-режим · заказы и сообщения доступны только в этом браузере.',
-        'Серверный режим · общая очередь заказов.',
+        'Типография ОКЭИ · заказы и статусы.',
       )
-      .replace('Переписка локальная, в этом браузере.', 'Переписка сохраняется на сервере.')
-      .replace('Показаны локальные данные и примеры.', 'Показаны серверные заказы.');
+      .replace('Переписка локальная, в этом браузере.', 'Переписка по заказу.')
+      .replace('Показаны локальные данные и примеры.', 'Показаны оформленные заказы.');
   }
   function draw() {
     if (state.user && document.body.classList.contains('is-staff')) {
@@ -132,7 +133,24 @@ export function createServerStaff({ api, ui, notify }) {
     if (!Object.keys(d).some((key) => key.startsWith('w'))) return;
     event.preventDefault();
     run(async () => {
+      if (d.wPersonnelToggle) {
+        const target = state.personnel.find((u) => u.id === d.wPersonnelToggle);
+        await api.request('/staff/' + target.id, {
+          method: 'PATCH',
+          body: { active: !target.active },
+        });
+        if (target.id === state.user.id) {
+          location.reload();
+          return;
+        }
+        state.personnel = await api.request('/staff');
+        return;
+      }
       if (d.wPage) {
+        if (d.wPage === 'personnel') {
+          if (state.user.role !== 'admin') return;
+          state.personnel = await api.request('/staff');
+        }
         state.page = d.wPage;
         state.query = '';
         state.kind = 'all';
@@ -174,7 +192,7 @@ export function createServerStaff({ api, ui, notify }) {
       if (button.hasAttribute('data-w-refresh')) {
         state.confirm = '';
         await refresh();
-        notify('Очередь обновлена с сервера.');
+        notify('Очередь обновлена.');
         return;
       }
       if (button.hasAttribute('data-w-export')) {
@@ -239,7 +257,7 @@ export function createServerStaff({ api, ui, notify }) {
           return;
         }
         await update('/status', { status: d.wNext, checked: state.checked.has(state.chosen) });
-        notify('Статус сохранён на сервере.');
+        notify('Статус обновлён.');
       }
     });
   });
@@ -283,6 +301,25 @@ export function createServerStaff({ api, ui, notify }) {
     const data = new FormData(event.target),
       id = event.target.id;
     run(async () => {
+      if (id.startsWith('w-personnel-')) {
+        const target = event.target.dataset.personnelId;
+        const body = { name: String(data.get('name') || '').trim() };
+        if (target) {
+          if (data.get('password')) body.password = String(data.get('password'));
+        } else {
+          body.login = String(data.get('login') || '').trim();
+          body.password = String(data.get('password') || '');
+        }
+        await api.request('/staff' + (target ? '/' + target : ''), {
+          method: target ? 'PATCH' : 'POST',
+          body,
+        });
+        if (target === state.user.id && body.password) {
+          location.reload();
+          return;
+        }
+        state.personnel = await api.request('/staff');
+      }
       if (id === 'w-chat-form')
         await update('/messages', {
           text: String(data.get('message') || '').trim(),
@@ -295,7 +332,7 @@ export function createServerStaff({ api, ui, notify }) {
           status: 'cancelled',
           reason: String(data.get('reason') || '').trim(),
         });
-      notify('Изменения сохранены на сервере.');
+      notify('Изменения сохранены.');
     });
   });
   document.addEventListener('keydown', (event) => {

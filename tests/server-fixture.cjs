@@ -20,6 +20,16 @@ const os = require('node:os');
     },
     'staff',
   );
+  await createUser(
+    api.db,
+    {
+      login: 'browser_admin',
+      password: 'browser-password-2026',
+      name: 'Администратор',
+      group: 'Типография',
+    },
+    'admin',
+  );
   const server = api.app.listen(18088, '127.0.0.1');
   for (const signal of ['SIGTERM', 'SIGINT'])
     process.on(signal, () => {

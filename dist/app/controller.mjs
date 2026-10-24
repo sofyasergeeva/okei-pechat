@@ -42,7 +42,7 @@ export function startApp({
     api,
   });
   function dashboard() {
-    return state.account?.role === 'staff'
+    return ['staff', 'admin'].includes(state.account?.role)
       ? staff.render(state.account)
       : customer.render(state.account);
   }
@@ -56,7 +56,7 @@ export function startApp({
     state.screen = target;
     document.body.dataset.screen = state.screen;
     document.body.classList.toggle('is-signedin', !!state.account);
-    document.body.classList.toggle('is-staff', state.account?.role === 'staff');
+    document.body.classList.toggle('is-staff', ['staff', 'admin'].includes(state.account?.role));
     document.body.classList.remove('focus-login', 'focus-password', 'form-error', 'success-art');
     state.lastFocus = '';
     main.innerHTML =
@@ -72,7 +72,7 @@ export function startApp({
       b.classList.toggle('active', b.dataset.go === state.screen),
     );
     $('#accountButton').innerHTML = state.account
-      ? `${state.account.role === 'staff' ? 'Кабинет' : 'Мой кабинет'} <span><svg class="ui-icon ui-arrow" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19 19 5M5 5h14v14"/></svg></span>`
+      ? `${['staff', 'admin'].includes(state.account.role) ? 'Кабинет' : 'Мой кабинет'} <span><svg class="ui-icon ui-arrow" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19 19 5M5 5h14v14"/></svg></span>`
       : 'Войти <span><svg class="ui-icon ui-arrow" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19 19 5M5 5h14v14"/></svg></span>';
     $('#accountButton').dataset.go = state.account ? 'account' : 'login';
     bindForm();
@@ -95,7 +95,10 @@ export function startApp({
   }
   function openModal(kind) {
     state.modalTrigger = document.activeElement;
-    const html = views.modalHTML(kind);
+    const html =
+      api && kind === 'forgot'
+        ? '<span class="eyebrow">Восстановление доступа</span><h2>Нужен новый пароль?</h2><p>Сотруднику поможет администратор типографии. Для заказчика восстановление доступа пока недоступно.</p><button class="btn primary" data-close>Понятно ✓</button>'
+        : views.modalHTML(kind);
     $('#modalContent').innerHTML = html;
     if ($('h2', modal)) $('h2', modal).id = 'modalTitle';
     modal.hidden = false;

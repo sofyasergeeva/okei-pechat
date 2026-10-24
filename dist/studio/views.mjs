@@ -117,7 +117,7 @@ export function createStudioViews(state) {
       `<aside class="s-tools">` +
       `<div class="s-tool-title">` +
       `<span class="c-kicker">Твой дизайн</span>` +
-      `<span id="s-save-status">Сохранение в браузере</span>` +
+      `<span id="s-save-status">Черновик сохраняется</span>` +
       `</div>` +
       `<button class="s-add-image" data-s-upload>` +
       `<span>↥</span>` +
@@ -189,9 +189,9 @@ export function createStudioViews(state) {
       `<h2 id="s-review-title">Всё на своих местах?</h2>` +
       `<img src="${url}" alt="Макет передней и задней стороны футболки">` +
       `<p>${esc(snapshot.shirtColorName)} · ${snapshot.size} · ${snapshot.count} шт.</p>` +
-      `<strong>${(snapshot.count * 950).toLocaleString('ru-RU')} ₽ <small>демонстрационная стоимость</small>` +
+      `<strong>${(snapshot.count * 950).toLocaleString('ru-RU')} ₽ <small>предварительная стоимость</small>` +
       `</strong>` +
-      `<p class="c-hint">Макет сохранится вместе с заказом в этом браузере. Реальная отправка сотруднику пока не подключена.</p>` +
+      `<p class="c-hint">Макет будет приложен к заказу. Наличие и итоговую цену подтвердит сотрудник.</p>` +
       `<button class="btn primary" id="s-confirm-order">Подтвердить заказ <svg class="ui-icon ui-arrow" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">` +
       `<path d="M5 19 19 5M5 5h14v14"/>` +
       `</svg>` +

@@ -40,7 +40,7 @@ const staff = serverMode
 let initialAccount = null;
 let startupError = '';
 if (api) {
-  api.prepare = (user) => (user.role === 'staff' ? staff : customer).load(user);
+  api.prepare = (user) => (['staff', 'admin'].includes(user.role) ? staff : customer).load(user);
   try {
     initialAccount = await api.request('/auth/session');
     if (initialAccount) await api.prepare(initialAccount);
