@@ -131,7 +131,7 @@ async function attachments(files) {
   }
   return design;
 }
-function parameters(design) {
+function parameters(design, rateKopecks = MERCH_PRICE * 100) {
   return {
     params: {
       design: 'studio',
@@ -141,7 +141,12 @@ function parameters(design) {
       shirtColor: design.shirtColor,
       title: design.title,
     },
-    quote: { copies: design.count, rate: MERCH_PRICE, total: design.count * MERCH_PRICE },
+    quote: {
+      copies: design.count,
+      rate: rateKopecks / 100,
+      total: (design.count * rateKopecks) / 100,
+      totalKopecks: design.count * rateKopecks,
+    },
   };
 }
 module.exports = { attachments, parameters };

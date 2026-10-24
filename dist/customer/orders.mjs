@@ -275,6 +275,12 @@ export function calculateDocumentsQuote(draft, math) {
     'total',
     'savings',
   ])
-    q[name] = results.reduce((sum, result) => sum + result.q[name], 0);
+    q[name] =
+      q.totalKopecks !== undefined &&
+      ['print', 'binding', 'bindingPerCopy', 'total', 'savings'].includes(name)
+        ? results.reduce((sum, r) => sum + Math.round(r.q[name] * 100), 0) / 100
+        : results.reduce((sum, result) => sum + result.q[name], 0);
+  if (q.totalKopecks !== undefined)
+    q.totalKopecks = results.reduce((sum, r) => sum + r.q.totalKopecks, 0);
   return { q };
 }

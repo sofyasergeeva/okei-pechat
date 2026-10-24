@@ -21,7 +21,7 @@ function openDatabase(dataDir) {
   db.pragma('foreign_keys = ON');
   db.pragma('busy_timeout = 5000');
   const version = db.pragma('user_version', { simple: true });
-  if (version > 4) {
+  if (version > 5) {
     db.close();
     throw Error('Unsupported database version');
   }
@@ -111,6 +111,32 @@ function openDatabase(dataDir) {
       throw error;
     } finally {
       if (db.open) db.pragma('foreign_keys = ON');
+    }
+  }
+  if (version < 5) {
+    try {
+      db.transaction(() => {
+        const columns = db.pragma('table_info(orders)').map((c) => c.name);
+        if (!columns.includes('assigned_to'))
+          db.exec('ALTER TABLE orders ADD COLUMN assigned_to TEXT REFERENCES users(id)');
+        if (!columns.includes('total_kopecks')) {
+          db.exec(
+            'ALTER TABLE orders ADD COLUMN total_kopecks INTEGER CHECK(total_kopecks>0); UPDATE orders SET total_kopecks=CAST(ROUND(total*100) AS INTEGER)',
+          );
+        }
+        db.exec(
+          'CREATE TABLE IF NOT EXISTS prices(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL CHECK(version>0),values_json TEXT NOT NULL CHECK(json_valid(values_json)))',
+        );
+        db.prepare('INSERT OR IGNORE INTO prices VALUES (1,1,?)').run(
+          JSON.stringify(require('./orders.cjs').initialPrice()),
+        );
+        if (db.pragma('foreign_key_check').length)
+          throw Error('Invalid price/assignment migration');
+        db.pragma('user_version = 5');
+      })();
+    } catch (error) {
+      db.close();
+      throw error;
     }
   }
   return db;

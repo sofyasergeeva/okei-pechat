@@ -187,6 +187,10 @@ async function createApi({
       res.json(result);
     }),
   );
+  app.get('/api/prices', (req, res) => res.json(orders.price(db)));
+  app.patch('/api/prices', required, administrator, (req, res) =>
+    res.json(orders.updatePrice(db, req.user, req.body)),
+  );
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 25 * 1024 * 1024, files: 10, fields: 0, parts: 10 },
@@ -334,7 +338,12 @@ async function createApi({
     (req, res, next) => (req.is('multipart/form-data') ? uploadDesign(req, res, next) : next()),
     asyncRoute(async (req, res) => {
       if (!req.is('multipart/form-data'))
-        return res.status(201).json(orders.createOrder(db, req.user, req.body));
+        return res.status(201).json(
+          orders.createOrder(db, req.user, {
+            ...req.body,
+            priceVersion: Number(req.get('X-Price-Version')),
+          }),
+        );
       const design = await merch.attachments(req.files);
       const metadata = req.files.map((file) => ({
         kind: file.fieldname,
@@ -351,7 +360,11 @@ async function createApi({
         return orders.createOrder(
           db,
           req.user,
-          { kind: 'merch', fileKeys: saved.map((file) => file.id) },
+          {
+            kind: 'merch',
+            fileKeys: saved.map((file) => file.id),
+            priceVersion: Number(req.get('X-Price-Version')),
+          },
           design,
         );
       });
@@ -375,6 +388,9 @@ async function createApi({
       .get(req.params.id, req.params.fileId);
     sendFile(req, res, file);
   });
+  app.post('/api/orders/:id/assignment', required, (req, res) =>
+    res.json(orders.assignOrder(db, req.user, req.params.id, req.body)),
+  );
   app.post('/api/orders/:id/printing', required, (req, res) =>
     res.json(orders.modifyOrder(db, req.user, req.params.id, req.body, 'printing')),
   );
@@ -430,6 +446,7 @@ async function createApi({
           : error.status || 500;
     if (status >= 500) console.error('API error:', error.code || 'INTERNAL_ERROR');
     res.status(status).json({
+      ...(error.code === 'PRICE_CHANGED' ? { code: error.code, price: error.price } : {}),
       error:
         status === 507
           ? 'Недостаточно свободного места. Обратись к сотруднику.'

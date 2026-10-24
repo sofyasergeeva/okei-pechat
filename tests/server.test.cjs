@@ -51,6 +51,13 @@ async function fixture(t, options = {}) {
         headers: {
           Origin: origin,
           ...(cookie ? { Cookie: cookie } : {}),
+          ...(route === '/api/orders' && method === 'POST'
+            ? {
+                'X-Price-Version': String(
+                  api.db.prepare('SELECT version FROM prices WHERE id=1').get().version,
+                ),
+              }
+            : {}),
           ...(!multipart && body !== undefined ? { 'Content-Type': 'application/json' } : {}),
           ...headers,
         },
@@ -432,7 +439,12 @@ test('Process restart: a fresh Node process restores the account, session, order
   const file = await r.json();
   r = await fetch(origin + '/api/orders', {
     method: 'POST',
-    headers: { Origin: origin, Cookie: cookie, 'Content-Type': 'application/json' },
+    headers: {
+      Origin: origin,
+      Cookie: cookie,
+      'Content-Type': 'application/json',
+      'X-Price-Version': '1',
+    },
     body: JSON.stringify({ fileKey: file.id, params }),
   });
   assert.equal(r.status, 201);
@@ -587,10 +599,13 @@ test('Multiple PDFs: independent odd duplex/binding totals, every attachment pro
   assert.equal(o.total, 428);
   const { calculateDocumentsQuote } = await import('../dist/customer/orders.mjs');
   const { loadOrderMath } = require('./customer-harness.cjs');
+  const math = loadOrderMath(),
+    book = await (await c('/api/prices')).json();
+  const { quoteWithPrices } = await import('../dist/pricing.mjs');
   assert.deepEqual(
     calculateDocumentsQuote(
       { ...params, duplex: true, copies: 2, binding: 'spiral', files: uploaded.files },
-      loadOrderMath(),
+      { selection: math.selection, quote: (d) => quoteWithPrices(math, d, book) },
     ).q,
     o.quote,
   );
@@ -685,13 +700,13 @@ test('Migration v1/v2: existing single-PDF order, exact price, messages and file
   await f.restart();
   const migrated = await (await c('/api/orders/' + o.id)).json();
   assert.deepEqual(migrated, o);
-  assert.equal(f.api.db.pragma('user_version', { simple: true }), 4);
+  assert.equal(f.api.db.pragma('user_version', { simple: true }), 5);
   assert.equal(migrated.files.length, 1);
   f.api.db.exec(
     'ALTER TABLE orders DROP COLUMN kind; ALTER TABLE files DROP COLUMN kind; PRAGMA user_version=2;',
   );
   await f.restart();
-  assert.equal(f.api.db.pragma('user_version', { simple: true }), 4);
+  assert.equal(f.api.db.pragma('user_version', { simple: true }), 5);
   assert.deepEqual(await (await c('/api/orders/' + o.id)).json(), o);
   assert.deepEqual(f.api.db.pragma('foreign_key_check'), []);
   await c('/api/orders/' + o.id + '/file');
@@ -1376,7 +1391,7 @@ test('Migration v3 to v4: verified backup, unchanged identities, passwords, sess
     f.api.db.prepare("SELECT count(*) n FROM users WHERE role='admin' OR active<>1").get().n,
     0,
   );
-  assert.equal(f.api.db.pragma('user_version', { simple: true }), 4);
+  assert.equal(f.api.db.pragma('user_version', { simple: true }), 5);
   assert.deepEqual(f.api.db.pragma('foreign_key_check'), []);
   assert.deepEqual(await (await c('/api/orders/' + order.id)).json(), order);
   assert.deepEqual(
@@ -1465,4 +1480,354 @@ test('Login: disabling or resetting a password during verification cannot issue 
       0,
     );
   }
+});
+
+async function roleClient(f, role, login) {
+  const user = await createUser(
+      f.api.db,
+      { login, password: 'test-password-2026', name: login, group: 'Print' },
+      role,
+    ),
+    c = f.client();
+  await c('/api/auth/login', { method: 'POST', body: { login, password: 'test-password-2026' } });
+  return { c, user };
+}
+
+test('Prices: admin CAS, exact decimal PDF/binding/multiple-file/merch calculations, old orders and restart', async (t) => {
+  const f = await fixture(t),
+    student = await f.register('priced_customer'),
+    staff = await operator(f),
+    admin = await roleClient(f, 'admin', 'price_admin'),
+    other = await roleClient(f, 'admin', 'price_other');
+  const initial = await (await admin.c('/api/prices')).json();
+  assert.equal(Object.keys(initial.values).length, 14);
+  assert.equal(initial.values.A4_mono_one, 400);
+  assert.equal(initial.values.spiralSmall, 10000);
+  assert.equal(initial.values.merch, 95000);
+  for (const c of [student.c, staff])
+    await c('/api/prices', { method: 'PATCH', status: 403, body: initial });
+  const file = await (await f.upload(student.c)).json();
+  const old = await newOrder(student.c, [file.id]);
+  const values = {
+    ...initial.values,
+    A4_mono_one: 101,
+    A4_mono_two: 203,
+    A3_color_one: 1234,
+    A3_color_two: 2001,
+    A4_photo_one: 3333,
+    spiralSmall: 10001,
+    spiralLarge: 15002,
+    diploma: 52503,
+    merch: 95007,
+  };
+  await admin.c('/api/prices', {
+    method: 'PATCH',
+    status: 400,
+    body: { ...initial, values: { ...values, merch: 0.1 } },
+  });
+  await admin.c('/api/prices', { method: 'PATCH', status: 400, body: { ...initial, version: {} } });
+  const changed = await (
+    await admin.c('/api/prices', { method: 'PATCH', body: { version: initial.version, values } })
+  ).json();
+  assert.equal(changed.version, initial.version + 1);
+  await other.c('/api/prices', { method: 'PATCH', status: 409, body: initial });
+  const odd = await newOrder(student.c, [file.id], { duplex: true, copies: 2, binding: 'spiral' });
+  assert.equal(odd.totalKopecks, 20610);
+  assert.equal(odd.total, 206.1);
+  const second = await (await f.upload(student.c)).json();
+  const batch = await newOrder(student.c, [file.id, second.id], {
+    duplex: true,
+    copies: 2,
+    binding: 'spiral',
+  });
+  assert.equal(batch.totalKopecks, 41220);
+  const color = await newOrder(student.c, [file.id], {
+    format: 'A3',
+    color: 'color',
+    duplex: true,
+  });
+  assert.equal(color.totalKopecks, 3235);
+  const photo = await newOrder(student.c, [file.id], {
+    paper: 'photo',
+    color: 'color',
+    binding: 'diploma',
+  });
+  assert.equal(photo.totalKopecks, 62502);
+  const { PDFDocument } = require('pdf-lib'),
+    pdf = await PDFDocument.create();
+  for (let i = 0; i < 101; i++) pdf.addPage();
+  const large = await (await f.upload(student.c, Buffer.from(await pdf.save()))).json();
+  assert.equal(
+    (await newOrder(student.c, [large.id], { duplex: true, binding: 'spiral' })).totalKopecks,
+    25253,
+  );
+  const { quoteWithPrices, parsePrice } = await import('../dist/pricing.mjs'),
+    { loadOrderMath } = require('./customer-harness.cjs'),
+    math = loadOrderMath();
+  assert.equal(parsePrice('950,07'), 95007);
+  assert.throws(() => parsePrice('1.001'));
+  assert.deepEqual(
+    quoteWithPrices(
+      math,
+      { ...params, pages: 3, duplex: true, copies: 2, binding: 'spiral' },
+      changed,
+    ),
+    odd.quote,
+  );
+  const { calculateDocumentsQuote } = await import('../dist/customer/orders.mjs');
+  assert.deepEqual(
+    calculateDocumentsQuote(
+      { ...params, duplex: true, copies: 2, binding: 'spiral', files: [file, second] },
+      { selection: math.selection, quote: (d) => quoteWithPrices(math, d, changed) },
+    ).q,
+    batch.quote,
+  );
+  const design = require('../dist/studio/model.mjs').fresh();
+  design.count = 2;
+  const merch = await (
+    await student.c('/api/orders', { method: 'POST', status: 201, body: merchPackage(design) })
+  ).json();
+  assert.equal(merch.totalKopecks, 190014);
+  assert.deepEqual(await (await student.c('/api/orders/' + old.id)).json(), old);
+  await f.restart();
+  assert.deepEqual(await (await admin.c('/api/prices')).json(), changed);
+  assert.deepEqual(await (await student.c('/api/orders/' + old.id)).json(), old);
+  assert.deepEqual(await (await student.c('/api/orders/' + merch.id)).json(), merch);
+});
+
+test('Prices: stale PDF and merch confirmations create no order or partial assets; explicit current confirmation succeeds', async (t) => {
+  const f = await fixture(t),
+    { c } = await f.register('price_changed'),
+    admin = await roleClient(f, 'admin', 'changing_admin');
+  const file = await (await f.upload(c)).json(),
+    old = await (await c('/api/prices')).json();
+  const current = await (
+    await admin.c('/api/prices', {
+      method: 'PATCH',
+      body: { ...old, values: { ...old.values, A4_mono_one: 501, merch: 123456 } },
+    })
+  ).json();
+  const stale = await (
+    await c('/api/orders', {
+      method: 'POST',
+      status: 409,
+      headers: { 'X-Price-Version': String(old.version) },
+      body: { fileKey: file.id, params },
+    })
+  ).json();
+  assert.equal(stale.code, 'PRICE_CHANGED');
+  assert.deepEqual(stale.price, current);
+  await c('/api/orders', {
+    method: 'POST',
+    status: 400,
+    headers: { 'X-Price-Version': '' },
+    body: { fileKey: file.id, params },
+  });
+  const count = f.api.db.prepare('SELECT count(*) n FROM files').get().n;
+  await c('/api/orders', {
+    method: 'POST',
+    status: 409,
+    headers: { 'X-Price-Version': String(old.version) },
+    body: merchPackage(require('../dist/studio/model.mjs').fresh()),
+  });
+  assert.equal(f.api.db.prepare('SELECT count(*) n FROM orders').get().n, 0);
+  assert.equal(f.api.db.prepare('SELECT count(*) n FROM files').get().n, count);
+  assert.equal((await newOrder(c, [file.id])).totalKopecks, 1503);
+});
+
+test('Assignments: two real employees race, owner-only production, release/reassign and no duplicate manufacture for PDF and merch', async (t) => {
+  const f = await fixture(t),
+    { c } = await f.register('assigned_customer'),
+    a = await roleClient(f, 'staff', 'worker_a'),
+    b = await roleClient(f, 'staff', 'worker_b'),
+    admin = await roleClient(f, 'admin', 'assignment_admin');
+  const file = await (await f.upload(c)).json();
+  for (const kind of ['document', 'merch']) {
+    let o =
+      kind === 'document'
+        ? await newOrder(c, [file.id])
+        : await (
+            await c('/api/orders', {
+              method: 'POST',
+              status: 201,
+              body: merchPackage(require('../dist/studio/model.mjs').fresh()),
+            })
+          ).json();
+    assert.equal(o.assignedTo, null);
+    await c('/api/orders/' + o.id + '/assignment', {
+      method: 'POST',
+      status: 403,
+      body: { version: o.version, action: 'claim' },
+    });
+    const results = await Promise.all(
+      [a, b].map(async (worker) => ({
+        worker,
+        r: await worker.c('/api/orders/' + o.id + '/status', {
+          method: 'PATCH',
+          status: [200, 409],
+          body: { version: o.version, status: 'work', checked: true },
+        }),
+      })),
+    );
+    assert.deepEqual(results.map((x) => x.r.status).sort(), [200, 409]);
+    const owner = results.find((x) => x.r.status === 200).worker,
+      other = owner === a ? b : a;
+    o = await (await owner.c('/api/orders/' + o.id)).json();
+    assert.equal(o.assignedTo, owner.user.id);
+    await other.c('/api/orders/' + o.id + '/printing', {
+      method: 'POST',
+      status: 403,
+      body: { version: o.version },
+    });
+    await other.c('/api/orders/' + o.id + '/status', {
+      method: 'PATCH',
+      status: 403,
+      body: { version: o.version, status: 'ready' },
+    });
+    await other.c('/api/orders/' + o.id + '/assignment', {
+      method: 'POST',
+      status: 403,
+      body: { version: o.version, action: 'assign', assigneeId: other.user.id },
+    });
+    o = await (
+      await owner.c('/api/orders/' + o.id + '/assignment', {
+        method: 'POST',
+        body: { version: o.version, action: 'release' },
+      })
+    ).json();
+    assert.equal(o.assignedTo, null);
+    o = await (
+      await other.c('/api/orders/' + o.id + '/assignment', {
+        method: 'POST',
+        body: { version: o.version, action: 'claim' },
+      })
+    ).json();
+    o = await (
+      await other.c('/api/orders/' + o.id + '/printing', {
+        method: 'POST',
+        body: { version: o.version },
+      })
+    ).json();
+    const started = o.printingStartedAt;
+    assert.ok(started);
+    await other.c('/api/orders/' + o.id + '/assignment', {
+      method: 'POST',
+      status: 409,
+      body: { version: o.version, action: 'release' },
+    });
+    await c('/api/orders/' + o.id + '/status', {
+      method: 'PATCH',
+      status: 409,
+      body: { version: o.version, status: 'cancelled' },
+    });
+    o = await (
+      await admin.c('/api/orders/' + o.id + '/assignment', {
+        method: 'POST',
+        body: { version: o.version, action: 'assign', assigneeId: owner.user.id },
+      })
+    ).json();
+    assert.equal(o.printingStartedAt, started);
+    assert.equal(o.assignedTo, owner.user.id);
+    await owner.c('/api/orders/' + o.id + '/printing', {
+      method: 'POST',
+      status: 409,
+      body: { version: o.version },
+    });
+    await other.c('/api/orders/' + o.id + '/printing', {
+      method: 'POST',
+      status: 403,
+      body: { version: o.version },
+    });
+    await f.restart();
+    assert.deepEqual(await (await owner.c('/api/orders/' + o.id)).json(), o);
+    o = await (
+      await owner.c('/api/orders/' + o.id + '/status', {
+        method: 'PATCH',
+        body: { version: o.version, status: 'ready' },
+      })
+    ).json();
+    o = await (
+      await owner.c('/api/orders/' + o.id + '/status', {
+        method: 'PATCH',
+        body: { version: o.version, status: 'issued', paid: true },
+      })
+    ).json();
+    assert.equal(o.payment, 'paid');
+  }
+  let free = await newOrder(c, [file.id]);
+  free = await (
+    await a.c('/api/orders/' + free.id + '/status', {
+      method: 'PATCH',
+      body: { version: free.version, status: 'work', checked: true },
+    })
+  ).json();
+  await c('/api/orders/' + free.id + '/status', {
+    method: 'PATCH',
+    body: { version: free.version, status: 'cancelled' },
+  });
+});
+
+test('Migration v4 to v5: original rows and files survive, work orders stay unassigned and existing manufacture cannot restart', async (t) => {
+  const f = await fixture(t),
+    { c } = await f.register('v4_owner'),
+    worker = await roleClient(f, 'staff', 'v4_worker');
+  const file = await (await f.upload(c)).json();
+  let order = await newOrder(c, [file.id]);
+  order = await (
+    await worker.c('/api/orders/' + order.id + '/status', {
+      method: 'PATCH',
+      body: { version: order.version, status: 'work', checked: true },
+    })
+  ).json();
+  order = await (
+    await worker.c('/api/orders/' + order.id + '/printing', {
+      method: 'POST',
+      body: { version: order.version },
+    })
+  ).json();
+  await worker.c('/api/orders/' + order.id + '/messages', {
+    method: 'POST',
+    body: { version: order.version, text: 'Existing production', pause: false },
+  });
+  const db = f.api.db;
+  db.exec(
+    'DROP TABLE prices; ALTER TABLE orders DROP COLUMN assigned_to; ALTER TABLE orders DROP COLUMN total_kopecks; PRAGMA user_version=4',
+  );
+  const tables = ['users', 'sessions', 'orders', 'files', 'order_files', 'events', 'messages'];
+  const before = Object.fromEntries(
+    tables.map((table) => [table, db.prepare('SELECT * FROM ' + table + ' ORDER BY rowid').all()]),
+  );
+  await f.restart();
+  for (const table of tables) {
+    let rows = f.api.db.prepare('SELECT * FROM ' + table + ' ORDER BY rowid').all();
+    if (table === 'orders')
+      rows = rows.map(({ assigned_to, total_kopecks, ...row }) => {
+        assert.equal(assigned_to, null);
+        assert.equal(total_kopecks, Math.round(row.total * 100));
+        return row;
+      });
+    assert.deepEqual(rows, before[table]);
+  }
+  assert.equal(f.api.db.pragma('user_version', { simple: true }), 5);
+  assert.deepEqual(f.api.db.pragma('foreign_key_check'), []);
+  const book = await (await c('/api/prices')).json();
+  assert.equal(book.values.merch, 95000);
+  let migrated = await (await worker.c('/api/orders/' + order.id)).json();
+  assert.equal(migrated.assignedTo, null);
+  assert.equal(migrated.printingStartedAt, order.printingStartedAt);
+  migrated = await (
+    await worker.c('/api/orders/' + order.id + '/assignment', {
+      method: 'POST',
+      body: { version: migrated.version, action: 'claim' },
+    })
+  ).json();
+  await worker.c('/api/orders/' + order.id + '/printing', {
+    method: 'POST',
+    status: 409,
+    body: { version: migrated.version },
+  });
+  assert.deepEqual(
+    Buffer.from(await (await c('/api/orders/' + order.id + '/file')).arrayBuffer()),
+    await fs.readFile(path.join(__dirname, '../dist/assets/sample.pdf')),
+  );
 });
