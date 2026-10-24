@@ -1,6 +1,6 @@
 import { downloadBlob } from '../shared.mjs';
 import { createId as uid } from '../shared.mjs';
-import { createStudioState, colors, area, fresh, confine } from './model.mjs';
+import { createStudioState, colors, area, fresh } from './model.mjs';
 import { createStudioStorage } from './storage.mjs';
 import { createStudioViews } from './views.mjs';
 import { createStudioCanvas } from './canvas.mjs';
@@ -12,7 +12,6 @@ export function createStudio({ document, indexedDB, notify, placeOrder }) {
   const views = createStudioViews(state);
   const { view, options, layersHTML } = views;
   const { image, shirtPath, paint, drawObject, bindCanvas } = createStudioCanvas(state, {
-    document,
     toast,
     inspect,
     save,

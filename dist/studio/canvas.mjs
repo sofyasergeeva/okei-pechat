@@ -8,11 +8,7 @@ import {
   point as canvasPoint,
   hitHandle as findHandle,
 } from './model.mjs';
-export function createStudioCanvas(
-  state,
-  { document, toast, inspect, save, remove, resizeInspector },
-) {
-  const $ = (s) => document.querySelector(s);
+export function createStudioCanvas(state, { toast, inspect, save, remove, resizeInspector }) {
   const cache = new Map();
   let paints = 0;
   const selectedObject = () => state.design?.[state.side].find((x) => x.id === state.selected);

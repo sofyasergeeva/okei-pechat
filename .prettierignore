@@ -1,26 +1,19 @@
-# Dependencies and third-party PDF.js distribution
+# Dependencies and third-party assets
 node_modules/
 dist/assets/
 dist/favicon.svg
 
-# Preserve the exact CSS token spelling approved in the previous formatting step.
-# Stock Prettier would normalize its numeric literals and attribute-selector quotes.
+# Files excluded to preserve existing formatting
 dist/editorial.css
-
-# Stock Prettier removes an explicit EmptyStatement after a function declaration.
-# Keep this source unchanged during the formatting-only stage.
 dist/order-math.js
 
-# Documentation, export metadata, hosting and editor settings
+# Documentation and configuration
 docs/
-.openai/
 .vscode/
 README.md
-START_HERE_RU.md
-SOURCE-MANIFEST.json
 package-lock.json
 
-# Generated files, local data and temporary output
+# Generated files and temporary data
 .git/
 .cache/
 coverage/
@@ -34,6 +27,8 @@ browser-data/
 *.tmp
 *.temp
 *.bak
+
+# Binary assets
 *.png
 *.jpg
 *.jpeg

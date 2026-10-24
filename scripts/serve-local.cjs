@@ -69,5 +69,5 @@ server.on('error', (err) => {
 });
 server.listen(port, '127.0.0.1', () => {
   console.log(`OKEI PECHAT: http://127.0.0.1:${port}`);
-  console.log('Press Ctrl+C to stop. No npm install or Sites connection is needed.');
+  console.log('Press Ctrl+C to stop.');
 });

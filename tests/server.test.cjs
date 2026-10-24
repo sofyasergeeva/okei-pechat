@@ -408,7 +408,7 @@ test('Process restart: a fresh Node process restores the account, session, order
     await stop();
     assert.equal(path.dirname(directory), os.tmpdir());
     assert.ok(path.basename(directory).startsWith('okei-process-test-'));
-    await fs.rm(directory, { recursive: true, force: true });
+    await fs.rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
   await start();
   let r = await fetch(origin + '/api/auth/register', {
@@ -1035,7 +1035,7 @@ test('Backup: live WAL snapshot restores multiple PDF/merch orders and every byt
     restored?.close();
     assert.equal(path.dirname(temp), os.tmpdir());
     assert.ok(path.basename(temp).startsWith('okei-backup-test-'));
-    await fs.rm(temp, { recursive: true, force: true });
+    await fs.rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
   const snapshot = path.join(temp, 'snapshot'),
     destination = path.join(temp, 'restored');

@@ -3,7 +3,6 @@ window.initializeControls = function (helpers) {
   const $ = (s, r = document) => r.querySelector(s);
   let popup = null,
     anchor = null,
-    source = null,
     activeIndex = 0,
     items = [],
     typed = '',
@@ -56,7 +55,6 @@ window.initializeControls = function (helpers) {
     }
     popup = null;
     anchor = null;
-    source = null;
     items = [];
     typed = '';
     if (restore && a?.isConnected) a.focus({ preventScroll: true });
@@ -86,7 +84,6 @@ window.initializeControls = function (helpers) {
   function open(select, button, atEnd = false) {
     close();
     closeHours();
-    source = select;
     anchor = button;
     popup = document.createElement('div');
     popup.id = button.getAttribute('aria-controls');
